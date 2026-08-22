@@ -6,6 +6,7 @@
 #include "cspromator/semantic_resolver.hpp"
 #include "cspromator/session.hpp"
 #include "cspromator/supplementary_state.hpp"
+#include "cspromator/telemetry_ingress.hpp"
 
 #include <chrono>
 #include <csignal>
@@ -82,7 +83,8 @@ int command_record(int argc, char** argv) {
             }
             std::cout << out.str() << std::flush;
         });
-    cspromator::GsiHttpServer server(port, clock, recorder, live_events);
+    cspromator::TelemetryIngress ingress(recorder, live_events);
+    cspromator::GsiHttpServer server(port, clock, ingress);
 
     g_active_server = &server;
     const auto old_sigint = std::signal(SIGINT, handle_signal);
