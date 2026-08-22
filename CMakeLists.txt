@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CSPromator VERSION 0.0.2 LANGUAGES CXX)
+project(CSPromator VERSION 0.0.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,7 @@ add_library(cspromator-core STATIC
     src/session.cpp
     src/game_state.cpp
     src/event_detector.cpp
+    src/live_event_pipeline.cpp
 )
 
 target_include_directories(cspromator-core PUBLIC include)
@@ -41,5 +42,13 @@ add_test(NAME event-regressions COMMAND cspromator-event-tests)
 add_executable(cspromator-session-tests tests/session_storage_tests.cpp)
 target_link_libraries(cspromator-session-tests PRIVATE cspromator-core)
 add_test(NAME session-storage COMMAND cspromator-session-tests)
+
+add_executable(cspromator-session002-tests tests/session_002_regressions.cpp)
+target_link_libraries(cspromator-session002-tests PRIVATE cspromator-core)
+add_test(NAME session-002-regressions COMMAND cspromator-session002-tests)
+
+add_executable(cspromator-live-pipeline-tests tests/live_event_pipeline_tests.cpp)
+target_link_libraries(cspromator-live-pipeline-tests PRIVATE cspromator-core)
+add_test(NAME live-event-pipeline COMMAND cspromator-live-pipeline-tests)
 
 install(TARGETS cspromator-probe RUNTIME DESTINATION bin)
