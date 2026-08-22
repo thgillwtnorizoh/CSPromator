@@ -18,7 +18,20 @@ The probe:
 - acknowledges GSI **before disk I/O** and without gameplay interpretation or audio work;
 - replays the captured snapshot timing later without CS2 running.
 
-### Build on Windows
+## Get the Windows build without a local toolchain
+
+GitHub Actions is the default build path for the prototype. Every push to `main` builds the Windows x64/MSVC version, runs a QPC clock smoke test, and uploads a portable ZIP artifact.
+
+1. Open the repository's **Actions** tab.
+2. Open the latest successful **Windows Build** run.
+3. Download the `CSPromator-0.0.1-windows-x64` artifact.
+4. Extract `CSPromator-0.0.1-windows-x64.zip` from the downloaded artifact.
+
+The portable package contains the probe executable, GSI configuration, installer script, README, and documentation. No Visual Studio or CMake installation is required on the target machine.
+
+The workflow can also be started manually with **Actions → Windows Build → Run workflow**.
+
+### Optional local build on Windows
 
 Requirements:
 
@@ -61,6 +74,14 @@ Restart CS2 if it was already open.
 
 ### Record
 
+From the portable GitHub Actions package:
+
+```powershell
+.\cspromator-probe.exe record 3010 sessions
+```
+
+From a local CMake build:
+
 ```powershell
 .\build\Release\cspromator-probe.exe record 3010 sessions
 ```
@@ -79,14 +100,16 @@ sessions/session_YYYYMMDD_HHMMSS/
 
 ### Replay
 
+Portable package:
+
 ```powershell
-.\build\Release\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 1.0
+.\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 1.0
 ```
 
 Fast replay:
 
 ```powershell
-.\build\Release\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 10
+.\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 10
 ```
 
 Append `dump` to print each raw payload during replay.
