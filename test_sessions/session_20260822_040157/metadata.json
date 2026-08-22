@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "application": "CSPromator Probe",
-  "application_version": "0.0.1",
-  "clock": {"name": "std::chrono::steady_clock(test-host)", "frequency": 1000000000},
-  "start_tick": 142688518830
-}

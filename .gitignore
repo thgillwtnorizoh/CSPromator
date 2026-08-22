@@ -8,3 +8,5 @@ sessions/*
 *.user
 *.suo
 *.VC.db
+
+test_sessions/
