@@ -35,11 +35,8 @@ std::string json_escape(const std::string& input) {
             case '\r': out += "\\r"; break;
             case '\t': out += "\\t"; break;
             default:
-                if (static_cast<unsigned char>(ch) < 0x20) {
-                    out += '?';
-                } else {
-                    out += ch;
-                }
+                if (static_cast<unsigned char>(ch) < 0x20) out += '?';
+                else out += ch;
         }
     }
     return out;
@@ -93,9 +90,7 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
 
     const auto info = clock_.info();
     std::ofstream meta(directory_ / "metadata.json", std::ios::binary);
-    if (!meta) {
-        throw std::runtime_error("Could not create session metadata.json");
-    }
+    if (!meta) throw std::runtime_error("Could not create session metadata.json");
     meta << "{\n"
          << "  \"schema_version\": 3,\n"
          << "  \"application\": \"CSPromator Probe\",\n"
@@ -108,9 +103,7 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
          << "}\n";
 
     timeline_.open(directory_ / "timeline.tsv", std::ios::binary);
-    if (!timeline_) {
-        throw std::runtime_error("Could not create session timeline.tsv");
-    }
+    if (!timeline_) throw std::runtime_error("Could not create session timeline.tsv");
     timeline_ << "ingress_order\tsequence\taccepted_tick\tbody_complete_tick\tack_sent_tick\tpersist_complete_tick\trelative_us\tbody_offset\tbody_bytes\n";
     timeline_.flush();
 
@@ -123,18 +116,13 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
     supplementary_timeline_.flush();
 
     raw_stream_.open(directory_ / "raw.gsi", std::ios::binary | std::ios::trunc);
-    if (!raw_stream_) {
-        throw std::runtime_error("Could not create session raw.gsi");
-    }
+    if (!raw_stream_) throw std::runtime_error("Could not create session raw.gsi");
 
     worker_ = std::thread(&SessionRecorder::worker_loop, this);
 }
 
 SessionRecorder::~SessionRecorder() {
-    try {
-        stop_and_flush();
-    } catch (...) {
-    }
+    try { stop_and_flush(); } catch (...) {}
 }
 
 SnapshotRecord SessionRecorder::enqueue(std::uint64_t accepted_tick,
@@ -151,12 +139,8 @@ SnapshotRecord SessionRecorder::enqueue(std::uint64_t accepted_tick,
 
     {
         std::lock_guard lock(queue_mutex_);
-        if (worker_error_) {
-            std::rethrow_exception(worker_error_);
-        }
-        if (stopping_) {
-            throw std::runtime_error("Session recorder is stopping");
-        }
+        if (worker_error_) std::rethrow_exception(worker_error_);
+        if (stopping_) throw std::runtime_error("Session recorder is stopping");
         record.sequence = ++sequence_;
         record.ingress_order = ++ingress_order_;
         queue_.push(PendingSnapshot{record, std::move(body)});
@@ -179,12 +163,8 @@ SupplementaryRecord SessionRecorder::enqueue_supplementary(SupplementarySnapshot
 
     {
         std::lock_guard lock(queue_mutex_);
-        if (worker_error_) {
-            std::rethrow_exception(worker_error_);
-        }
-        if (stopping_) {
-            throw std::runtime_error("Session recorder is stopping");
-        }
+        if (worker_error_) std::rethrow_exception(worker_error_);
+        if (stopping_) throw std::runtime_error("Session recorder is stopping");
         snapshot.sequence = ++supplementary_sequence_;
         record.ingress_order = ++ingress_order_;
         record.snapshot = std::move(snapshot);
@@ -197,19 +177,13 @@ SupplementaryRecord SessionRecorder::enqueue_supplementary(SupplementarySnapshot
 void SessionRecorder::stop_and_flush() {
     {
         std::lock_guard lock(queue_mutex_);
-        if (stopped_) {
-            return;
-        }
+        if (stopped_) return;
         stopping_ = true;
     }
     queue_cv_.notify_all();
-    if (worker_.joinable()) {
-        worker_.join();
-    }
+    if (worker_.joinable()) worker_.join();
     stopped_ = true;
-    if (worker_error_) {
-        std::rethrow_exception(worker_error_);
-    }
+    if (worker_error_) std::rethrow_exception(worker_error_);
 }
 
 void SessionRecorder::worker_loop() {
@@ -220,9 +194,7 @@ void SessionRecorder::worker_loop() {
                 std::unique_lock lock(queue_mutex_);
                 queue_cv_.wait(lock, [this] { return stopping_ || !queue_.empty(); });
                 if (queue_.empty()) {
-                    if (stopping_) {
-                        break;
-                    }
+                    if (stopping_) break;
                     continue;
                 }
                 pending = std::move(queue_.front());
@@ -230,7 +202,6 @@ void SessionRecorder::worker_loop() {
             }
             persist(std::move(pending));
         }
-
         raw_stream_.flush();
         timeline_.flush();
         supplementary_timeline_.flush();
@@ -238,9 +209,7 @@ void SessionRecorder::worker_loop() {
         std::lock_guard lock(queue_mutex_);
         worker_error_ = std::current_exception();
         stopping_ = true;
-        while (!queue_.empty()) {
-            queue_.pop();
-        }
+        while (!queue_.empty()) queue_.pop();
     }
 }
 
@@ -258,9 +227,7 @@ void SessionRecorder::persist_snapshot(PendingSnapshot pending) {
 
     raw_stream_.write(pending.body.data(), static_cast<std::streamsize>(pending.body.size()));
     raw_stream_.flush();
-    if (!raw_stream_) {
-        throw std::runtime_error("Could not append raw GSI snapshot");
-    }
+    if (!raw_stream_) throw std::runtime_error("Could not append raw GSI snapshot");
 
     raw_offset_ += static_cast<std::uint64_t>(pending.body.size());
     record.persist_complete_tick = clock_.now();
@@ -301,9 +268,7 @@ void SessionRecorder::persist_supplementary(PendingSupplementary pending) {
 
 std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_directory) {
     std::ifstream input(session_directory / "timeline.tsv", std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("Could not open timeline.tsv in " + session_directory.string());
-    }
+    if (!input) throw std::runtime_error("Could not open timeline.tsv in " + session_directory.string());
 
     std::string header;
     std::getline(input, header);
@@ -313,9 +278,7 @@ std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_dire
     std::vector<ReplayEntry> entries;
     std::string line;
     while (std::getline(input, line)) {
-        if (line.empty()) {
-            continue;
-        }
+        if (line.empty()) continue;
         const auto fields = split_tsv(line);
         const std::size_t expected = has_ingress_order ? 9 : 8;
         if (fields.size() < expected) {
@@ -324,13 +287,9 @@ std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_dire
 
         SnapshotRecord record{};
         std::size_t i = 0;
-        if (has_ingress_order) {
-            record.ingress_order = std::stoull(fields[i++]);
-        }
+        if (has_ingress_order) record.ingress_order = std::stoull(fields[i++]);
         record.sequence = std::stoull(fields[i++]);
-        if (!has_ingress_order) {
-            record.ingress_order = record.sequence;
-        }
+        if (!has_ingress_order) record.ingress_order = record.sequence;
         record.accepted_tick = std::stoull(fields[i++]);
         record.body_complete_tick = std::stoull(fields[i++]);
         record.ack_sent_tick = std::stoull(fields[i++]);
@@ -344,7 +303,6 @@ std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_dire
             record.body_bytes = static_cast<std::size_t>(std::stoull(fields[i++]));
             record.body_filename = fields[i++];
         }
-
         entries.push_back({record, session_directory, packed_v2});
     }
     return entries;
@@ -353,9 +311,7 @@ std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_dire
 std::vector<SupplementaryReplayEntry> load_supplementary_timeline(
     const std::filesystem::path& session_directory) {
     const auto path = session_directory / "supplementary.timeline.tsv";
-    if (!std::filesystem::exists(path)) {
-        return {};
-    }
+    if (!std::filesystem::exists(path)) return {};
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -373,9 +329,7 @@ std::vector<SupplementaryReplayEntry> load_supplementary_timeline(
     std::vector<SupplementaryReplayEntry> entries;
     std::string line;
     while (std::getline(input, line)) {
-        if (line.empty()) {
-            continue;
-        }
+        if (line.empty()) continue;
         const auto fields = split_tsv(line);
         if (fields.size() < 11) {
             throw std::runtime_error("Malformed supplementary timeline row in " + session_directory.string());
@@ -432,9 +386,12 @@ std::vector<ReplayItem> load_replay_stream(const std::filesystem::path& session_
         items.push_back(std::move(item));
     }
 
+    // Schema-v3 ingress order is the authoritative order the live semantic
+    // pipeline received. Observation timestamps remain data, not a license to
+    // reorder delayed cross-source submissions during replay.
     std::stable_sort(items.begin(), items.end(), [](const ReplayItem& a, const ReplayItem& b) {
-        if (a.relative_us != b.relative_us) return a.relative_us < b.relative_us;
         if (a.ingress_order != b.ingress_order) return a.ingress_order < b.ingress_order;
+        if (a.relative_us != b.relative_us) return a.relative_us < b.relative_us;
         return static_cast<int>(a.kind) < static_cast<int>(b.kind);
     });
     return items;
@@ -446,9 +403,7 @@ std::string load_replay_body(const ReplayEntry& entry) {
     }
 
     std::ifstream input(entry.session_directory / "raw.gsi", std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("Could not open raw.gsi in " + entry.session_directory.string());
-    }
+    if (!input) throw std::runtime_error("Could not open raw.gsi in " + entry.session_directory.string());
     input.seekg(static_cast<std::streamoff>(entry.record.body_offset));
     std::string body(entry.record.body_bytes, '\0');
     input.read(body.data(), static_cast<std::streamsize>(body.size()));
@@ -460,9 +415,7 @@ std::string load_replay_body(const ReplayEntry& entry) {
 
 std::string load_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("Could not open " + path.string());
-    }
+    if (!input) throw std::runtime_error("Could not open " + path.string());
     std::ostringstream out;
     out << input.rdbuf();
     return out.str();
