@@ -25,9 +25,7 @@ void require(bool condition, const char* message) {
     }
 }
 
-} // namespace
-
-int main() {
+void test_previous_round_alive_state_cannot_confirm_next_round() {
     cspromator::EventDetector detector;
     cspromator::SemanticResolver resolver;
 
@@ -88,7 +86,45 @@ int main() {
     const auto confirmed = resolver.process_supplementary(current_round);
     require(has(confirmed, cspromator::EventType::Ace),
             "current-round zero-enemy observation may confirm the ACE");
+}
 
+void test_delayed_supplement_cannot_rewind_newer_gsi() {
+    cspromator::EventDetector detector;
+    cspromator::SemanticResolver resolver;
+
+    const auto state = cspromator::normalize_gsi(R"({
+      "provider":{"steamid":"LOCAL"},
+      "map":{"name":"de_test","mode":"competitive","phase":"live","round":2},
+      "round":{"phase":"live"},
+      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"round_kills":0,"round_killhs":0},"match_stats":{"kills":0,"assists":0,"deaths":0,"mvps":0}}
+    })", 10, 10000);
+    auto facts = detector.process(state);
+    resolver.process_gsi(state, facts);
+
+    cspromator::SupplementarySnapshot delayed;
+    delayed.sequence = 1;
+    delayed.relative_us = 9000; // observed before GSI, submitted after it
+    delayed.roster_revision = 4;
+    delayed.source = cspromator::SupplementarySourceKind::Replay;
+    delayed.teams.ct_alive = 1;
+    delayed.teams.t_alive = 4;
+    delayed.teams.ct_total = 5;
+    delayed.teams.t_total = 5;
+
+    const auto ignored = resolver.process_supplementary(delayed);
+    require(ignored.empty(),
+            "supplement older than latest processed GSI should be ignored");
+    require(!resolver.context().supplement_available,
+            "delayed old supplement must not populate current semantic context");
+    require(!resolver.context().enemy_alive,
+            "delayed old supplement must not rewind enemy alive count");
+}
+
+} // namespace
+
+int main() {
+    test_previous_round_alive_state_cannot_confirm_next_round();
+    test_delayed_supplement_cannot_rewind_newer_gsi();
     std::cout << "CSPromator stale supplementary regression tests passed.\n";
     return 0;
 }
