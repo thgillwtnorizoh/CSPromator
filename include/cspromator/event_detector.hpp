@@ -17,6 +17,8 @@ enum class EventType {
     FreezeEnded,
     RoundStarted,
     RoundEnded,
+    RoundWon,
+    RoundLost,
     TeamChanged,
     LocalPlayerLost,
     LocalPlayerRestored,
@@ -25,6 +27,8 @@ enum class EventType {
     PlayerDied,
     PlayerKill,
     PlayerHeadshotKill,
+    PlayerAssist,
+    PlayerFlashed,
     Ace,
     MvpGained,
     BombPlanted,
@@ -54,11 +58,16 @@ public:
 
 private:
     PromatorEvent make_event(EventType type, const NormalizedGameState& state) const;
+    void clear_match_memory();
 
     std::optional<NormalizedGameState> previous_;
     std::optional<int> last_ended_round_;
+    std::optional<int> last_outcome_round_;
     std::optional<int> last_known_local_hp_;
     std::optional<int> last_known_local_mvps_;
+    std::optional<int> last_known_local_assists_;
+    std::optional<std::string> last_known_local_team_;
+    bool local_observation_lost_{false};
 };
 
 } // namespace cspromator
