@@ -7,9 +7,22 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cspromator {
+
+enum class MatchLifecyclePhase {
+    Detached,
+    Warmup,
+    FreezeTime,
+    LiveRound,
+    PostRound,
+    GameOver,
+    Other,
+};
+
+std::string_view to_string(MatchLifecyclePhase phase);
 
 struct SemanticResolverConfig {
     // Intentionally unset until a real supplementary provider has been profiled.
@@ -21,6 +34,19 @@ struct SemanticResolverConfig {
 };
 
 struct SemanticContext {
+    // Lifecycle context is deliberately orthogonal to factual events. A
+    // PLAYER_KILL remains a PLAYER_KILL in warmup or post-round; Director rules
+    // can decide whether the current lifecycle makes it musically relevant.
+    MatchLifecyclePhase lifecycle{MatchLifecyclePhase::Detached};
+    bool match_attached{false};
+    bool scored_round_active{false};
+    bool local_player_acquired{false};
+    std::optional<bool> local_player_alive;
+    std::optional<std::string> map_name;
+    std::optional<std::string> map_mode;
+    std::optional<std::string> map_phase;
+    std::optional<std::string> round_phase;
+
     bool supplement_available{false};
     SupplementarySourceKind supplement_source{SupplementarySourceKind::Unknown};
     std::uint64_t supplement_relative_us{};
@@ -57,6 +83,7 @@ public:
 private:
     bool snapshot_fresh_at(const SupplementarySnapshot& snapshot,
                            std::uint64_t reference_us) const;
+    void update_lifecycle_context(const NormalizedGameState& state);
     void begin_round(const NormalizedGameState& state);
     void establish_round_baseline(const SupplementarySnapshot& snapshot);
     void update_context(const SupplementarySnapshot& snapshot);
@@ -75,6 +102,7 @@ private:
     std::optional<SupplementarySnapshot> latest_supplement_;
     std::optional<std::string> local_team_;
     std::optional<bool> local_player_alive_;
+    bool local_player_acquired_{false};
 
     bool round_has_known_start_{false};
     bool round_ended_{false};

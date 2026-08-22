@@ -13,6 +13,10 @@ bool has_event(const std::vector<PromatorEvent>& events, EventType type) {
     });
 }
 
+bool equals(const std::optional<std::string>& value, std::string_view expected) {
+    return value && *value == expected;
+}
+
 bool supported_round_mode_for_ace(const std::optional<std::string>& mode) {
     if (!mode) {
         return false;
@@ -21,6 +25,19 @@ bool supported_round_mode_for_ace(const std::optional<std::string>& mode) {
 }
 
 } // namespace
+
+std::string_view to_string(MatchLifecyclePhase phase) {
+    switch (phase) {
+        case MatchLifecyclePhase::Detached: return "detached";
+        case MatchLifecyclePhase::Warmup: return "warmup";
+        case MatchLifecyclePhase::FreezeTime: return "freezetime";
+        case MatchLifecyclePhase::LiveRound: return "live-round";
+        case MatchLifecyclePhase::PostRound: return "post-round";
+        case MatchLifecyclePhase::GameOver: return "gameover";
+        case MatchLifecyclePhase::Other: return "other";
+    }
+    return "other";
+}
 
 SemanticResolver::SemanticResolver(SemanticResolverConfig config)
     : config_(std::move(config)) {}
@@ -31,6 +48,7 @@ void SemanticResolver::reset() {
     latest_supplement_.reset();
     local_team_.reset();
     local_player_alive_.reset();
+    local_player_acquired_ = false;
 
     round_has_known_start_ = false;
     round_ended_ = false;
@@ -55,6 +73,34 @@ bool SemanticResolver::snapshot_fresh_at(
         return true;
     }
     return reference_us - snapshot.relative_us <= *config_.max_supplement_age_us;
+}
+
+void SemanticResolver::update_lifecycle_context(const NormalizedGameState& state) {
+    context_.match_attached = state.map_name.has_value();
+    context_.map_name = state.map_name;
+    context_.map_mode = state.map_mode;
+    context_.map_phase = state.map_phase;
+    context_.round_phase = state.round_phase;
+    context_.local_player_acquired = local_player_acquired_;
+    context_.local_player_alive = local_player_alive_;
+
+    if (!state.map_name) {
+        context_.lifecycle = MatchLifecyclePhase::Detached;
+    } else if (equals(state.map_phase, "warmup")) {
+        context_.lifecycle = MatchLifecyclePhase::Warmup;
+    } else if (equals(state.map_phase, "gameover")) {
+        context_.lifecycle = MatchLifecyclePhase::GameOver;
+    } else if (equals(state.round_phase, "freezetime")) {
+        context_.lifecycle = MatchLifecyclePhase::FreezeTime;
+    } else if (equals(state.round_phase, "live")) {
+        context_.lifecycle = MatchLifecyclePhase::LiveRound;
+    } else if (equals(state.round_phase, "over")) {
+        context_.lifecycle = MatchLifecyclePhase::PostRound;
+    } else {
+        context_.lifecycle = MatchLifecyclePhase::Other;
+    }
+
+    context_.scored_round_active = context_.lifecycle == MatchLifecyclePhase::LiveRound;
 }
 
 void SemanticResolver::begin_round(const NormalizedGameState& state) {
@@ -297,6 +343,9 @@ std::vector<PromatorEvent> SemanticResolver::process_gsi(
     }
 
     latest_state_ = state;
+    if (has_event(factual_events, EventType::LocalPlayerAcquired) || state.local_player_valid) {
+        local_player_acquired_ = true;
+    }
     if (state.local_player_valid && state.player_team) {
         local_team_ = state.player_team;
     }
@@ -309,6 +358,8 @@ std::vector<PromatorEvent> SemanticResolver::process_gsi(
     if (has_event(factual_events, EventType::PlayerRespawned)) {
         local_player_alive_ = true;
     }
+
+    update_lifecycle_context(state);
 
     if (has_event(factual_events, EventType::RoundStarted)) {
         begin_round(state);
@@ -347,8 +398,8 @@ std::vector<PromatorEvent> SemanticResolver::process_gsi(
     }
 
     if (has_event(factual_events, EventType::MatchLeft)) {
-        // Keep any semantic end event produced above, but clear knowledge before
-        // the next match attaches.
+        // Keep any semantic end event produced above, but clear all match-local
+        // knowledge before the next map attaches.
         const auto retained_events = events;
         reset();
         return retained_events;
@@ -364,8 +415,13 @@ std::vector<PromatorEvent> SemanticResolver::process_supplementary(
         return events;
     }
     if (last_supplement_us_ && snapshot.relative_us < *last_supplement_us_) {
-        // Cross-source state must never time-travel. A future live adapter should
-        // QPC-stamp at observation and submit in monotonic order.
+        return events;
+    }
+    if (latest_state_ && snapshot.relative_us < latest_state_->relative_us) {
+        // The observation was captured before GSI state that has already been
+        // processed. Accepting it now would make the live semantic state move
+        // backward in time. Record it for diagnostics/replay, but ignore it in
+        // the resolver. A future provider should publish promptly.
         return events;
     }
 

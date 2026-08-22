@@ -44,6 +44,7 @@ struct PerspectiveTeamCounts {
 };
 
 std::string_view to_string(SupplementarySourceKind source);
+std::optional<SupplementarySourceKind> supplementary_source_from_string(std::string_view value);
 bool valid_team_counts(const TeamCounts& counts);
 std::optional<PerspectiveTeamCounts> perspective_for_team(
     const TeamCounts& counts,
