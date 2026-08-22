@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CSPromator VERSION 0.0.5 LANGUAGES CXX)
+project(CSPromator VERSION 0.0.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,8 @@ add_library(cspromator-core STATIC
     src/session.cpp
     src/game_state.cpp
     src/event_detector.cpp
+    src/supplementary_state.cpp
+    src/semantic_resolver.cpp
     src/live_event_pipeline.cpp
 )
 
@@ -58,5 +60,13 @@ add_test(NAME session-004-casual COMMAND cspromator-session004-tests)
 add_executable(cspromator-live-pipeline-tests tests/live_event_pipeline_tests.cpp)
 target_link_libraries(cspromator-live-pipeline-tests PRIVATE cspromator-core)
 add_test(NAME live-event-pipeline COMMAND cspromator-live-pipeline-tests)
+
+add_executable(cspromator-semantic-resolver-tests tests/semantic_resolver_tests.cpp)
+target_link_libraries(cspromator-semantic-resolver-tests PRIVATE cspromator-core)
+add_test(NAME semantic-resolver COMMAND cspromator-semantic-resolver-tests)
+
+add_executable(cspromator-live-supplement-tests tests/live_supplementary_pipeline_tests.cpp)
+target_link_libraries(cspromator-live-supplement-tests PRIVATE cspromator-core)
+add_test(NAME live-supplementary-pipeline COMMAND cspromator-live-supplement-tests)
 
 install(TARGETS cspromator-probe RUNTIME DESTINATION bin)
