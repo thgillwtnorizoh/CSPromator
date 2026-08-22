@@ -2,31 +2,32 @@
 
 **Promator** is an experimental adaptive-audio director for Counter-Strike 2.
 
-The project deliberately builds a trustworthy telemetry and semantic spine before the audio machinery. Prototype **0.0.6** keeps Game State Integration (GSI) as the required factual source and adds an optional supplementary-evidence layer for player-visible aggregate state that GSI cannot provide.
+The project deliberately builds a trustworthy telemetry and semantic spine before the audio machinery. Prototype **0.0.7** keeps Game State Integration (GSI) as the required factual source, hardens long-running multi-match lifecycle behavior, and makes optional supplementary evidence recordable/replayable before any live Panorama provider exists.
 
 No live Panorama provider and no audio engine are included yet. Both omissions are intentional.
 
-## Prototype 0.0.6
+## Prototype 0.0.7
 
 The probe now:
 
 - listens for GSI only on `127.0.0.1`;
 - timestamps receive activity using `QueryPerformanceCounter` on Windows;
 - acknowledges GSI before persistence, JSON parsing, event detection, or director work;
-- fans GSI payloads into independent persistence and live-interpretation worker paths;
 - stores exact raw GSI payload bytes in packed `raw.gsi` sessions;
 - accepts local-player numeric state only when `player.steamid == provider.steamid`;
 - distinguishes initial `LOCAL_PLAYER_ACQUIRED` from later spectator `LOCAL_PLAYER_LOST` / `LOCAL_PLAYER_RESTORED` cycles;
 - derives factual round, player, bomb, condition and outcome events from GSI;
 - separates event evidence strength from event source provenance;
 - keeps `ACE_CANDIDATE` as a GSI + mode-rule claim rather than asserting an unproven ace;
-- defines a minimal optional supplementary contract containing only CT/T alive and total counts;
-- exposes a **push** supplementary ingress in the live worker pipeline instead of a Panorama polling loop;
-- uses a `roster_revision` to keep join/leave churn sticky even if team totals later return to the same value;
-- can confirm evidence-backed `ACE` and derive `CLUTCH_STARTED`, `CLUTCH_UPDATED` and `CLUTCH_ENDED` when suitable supplementary observations are supplied;
-- exposes semantic team-balance context (`local_alive`, `enemy_alive`, totals and alive delta) for the future Director;
-- rejects invalid or out-of-order supplementary snapshots rather than rewinding state;
-- includes regression coverage derived from four real GSI sessions plus synthetic supplementary-evidence scenarios.
+- exposes Director-ready lifecycle context: detached, warmup, freezetime, live-round, post-round, gameover and other;
+- keeps warmup/post-round kills and deaths factual while marking only live-round context as `scored_round_active`;
+- defines a minimal optional supplementary contract containing only CT/T alive and total counts plus `roster_revision`;
+- exposes a **push** supplementary ingress instead of a Panorama polling loop;
+- can confirm evidence-backed `ACE` and derive clutch semantics when suitable supplementary observations are supplied;
+- records new sessions as **schema v3**, adding `supplementary.timeline.tsv` and shared cross-source `ingress_order` while retaining packed `raw.gsi`;
+- replays v1, v2 and v3 sessions;
+- merges GSI + supplementary observations deterministically for offline replay/analysis;
+- includes anonymized regression coverage derived from five real GSI sessions plus synthetic supplementary-evidence scenarios.
 
 See:
 
@@ -34,6 +35,7 @@ See:
 - [`docs/SESSION_002_FINDINGS.md`](docs/SESSION_002_FINDINGS.md)
 - [`docs/SESSION_003_FINDINGS.md`](docs/SESSION_003_FINDINGS.md)
 - [`docs/SESSION_004_FINDINGS.md`](docs/SESSION_004_FINDINGS.md)
+- [`docs/SESSION_005_FINDINGS.md`](docs/SESSION_005_FINDINGS.md)
 - [`docs/SUPPLEMENTARY_STATE_ARCHITECTURE.md`](docs/SUPPLEMENTARY_STATE_ARCHITECTURE.md)
 
 ## Get the Windows build without a local toolchain
@@ -42,7 +44,7 @@ GitHub Actions is the default build path. Every push to `main` builds Windows x6
 
 1. Open **Actions**.
 2. Open the latest successful **Windows Build**.
-3. Download `CSPromator-0.0.6-windows-x64`.
+3. Download `CSPromator-0.0.7-windows-x64`.
 4. Extract the artifact and run the probe directly.
 
 No Visual Studio or CMake installation is required on the target machine.
@@ -92,18 +94,70 @@ Example:
   ACE_CANDIDATE value=5 evidence=mode-assumption sources=gsi+mode-rules
 ```
 
-The public CLI does **not** connect to Panorama in 0.0.6. Therefore ordinary `record` behavior remains GSI-only and works without supplementary state.
+The public CLI does **not** connect to Panorama in 0.0.7. Ordinary recording therefore remains GSI-only unless another explicitly wired supplementary source is used in development/testing.
 
-Modern GSI session layout remains:
+New schema-v3 session layout:
 
 ```text
 sessions/session_YYYYMMDD_HHMMSS/
   metadata.json
   timeline.tsv
   raw.gsi
+  supplementary.timeline.tsv
 ```
 
-Stop with `Ctrl+C`; Promator drains the live-event queue and persistence queue before exit.
+`timeline.tsv` and `supplementary.timeline.tsv` share an `ingress_order`. This preserves cross-source ordering when a future provider is finally connected. A normal GSI-only run still creates the supplementary file with only its header.
+
+Stop with `Ctrl+C`; Promator drains queued session/live work before exit.
+
+## Lifecycle context instead of event-name explosion
+
+Session 005 proved that a long-running process can observe:
+
+```text
+menu
+-> attach at gameover
+-> menu
+-> warmup
+-> scored rounds
+-> post-round kills/death
+-> leave
+-> another map mid-round
+-> spectator carousel
+-> first local acquisition
+-> gameover
+-> menu
+```
+
+Promator keeps factual events factual and exposes lifecycle beside them:
+
+```text
+PLAYER_KILL + lifecycle=warmup
+PLAYER_KILL + lifecycle=live-round
+PLAYER_KILL + lifecycle=post-round
+```
+
+The event name does not change. Future Director rules can check:
+
+```text
+scored_round_active == true
+```
+
+when they only want live scored combat.
+
+Current lifecycle values:
+
+```text
+detached
+warmup
+freezetime
+live-round
+post-round
+gameover
+other
+```
+
+Match leave/reset also clears match-local supplementary state so one map cannot contaminate the next.
 
 ## Factual events versus semantic evidence
 
@@ -129,7 +183,7 @@ ACE_CANDIDATE
   sources=gsi+mode-rules
 ```
 
-If a future legitimate supplementary provider supplies stable aggregate roster/alive evidence, the semantic resolver can later add:
+Suitable supplementary evidence may add:
 
 ```text
 ACE
@@ -144,7 +198,7 @@ This architecture keeps factual GSI events intact instead of creating a second c
 
 ## Minimal supplementary contract
 
-The first contract intentionally contains only:
+The contract intentionally contains only:
 
 ```text
 CT alive
@@ -156,7 +210,7 @@ roster revision
 
 It does not require names, Steam IDs, positions, inventories or hidden enemy data.
 
-`roster_revision` increments when team membership changes. This means a sequence such as:
+`roster_revision` increments when team membership changes. A sequence such as:
 
 ```text
 5 enemies
@@ -164,7 +218,7 @@ It does not require names, Steam IDs, positions, inventories or hidden enemy dat
 -> 5 enemies
 ```
 
-still permanently marks that round as roster-changed for ACE confirmation.
+still marks the round as roster-changed even though the final total matches the original value.
 
 Supplementary observations are pushed into the fusion worker. Promator core contains no Panorama polling loop.
 
@@ -180,27 +234,44 @@ Casual:       no kill-count-only ace candidate
 Other modes:  unknown until tested
 ```
 
-Confirmed `ACE` is a different semantic event. With supplementary evidence, the resolver requires a known round start, stable enemy roster revision/total, local round kills equal to the initial enemy total, and enemy alive count reaching zero. Casual can therefore be confirmed from actual stable roster evidence without inventing a fixed Casual threshold.
+Confirmed `ACE` is a separate semantic event. With supplementary evidence, the resolver requires a known round start, stable enemy roster revision/total, local round kills equal to the initial enemy total, and enemy alive count reaching zero.
 
 Late post-round kills remain factual `PLAYER_KILL` events and cannot manufacture a GSI ace candidate.
 
-## Replay and analysis
+## Replay and semantic analysis
 
-GSI replay remains:
+Replay now merges every recorded observation in original cross-source order:
 
 ```powershell
 .\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 10
 ```
 
-Append `dump` to print raw payloads. v0.0.1 per-file sessions remain supported.
+Output distinguishes:
 
-Offline GSI analysis remains:
+```text
+[REPLAY GSI]
+[REPLAY SUPPLEMENT]
+```
+
+Append `dump` to print raw GSI payloads. Old v0.0.1 per-file sessions and v2 packed sessions remain supported.
+
+Offline analysis now feeds the merged stream through the same factual + semantic stack:
 
 ```powershell
 .\cspromator-probe.exe analyze sessions\session_YYYYMMDD_HHMMSS
 ```
 
-0.0.6 does not yet persist supplementary observations because no runtime supplementary provider ships. Before any real provider is enabled, its observations must gain deterministic recording/replay support. See the supplementary architecture document.
+```text
+recorded observations
+        |
+        +-- GSI ------------> EventDetector --+
+        |                                      |
+        +-- supplementary ---------------------+--> SemanticResolver
+                                                   |
+                                                semantic events
+```
+
+A future provider therefore cannot ship as unreplayable live-only state. The recording/replay contract already exists before the bridge.
 
 ## Trust boundary
 
@@ -209,8 +280,6 @@ CSPromator does not assume top-level `player` always means the local user. Local
 ```text
 player.steamid == provider.steamid
 ```
-
-The remembered local team survives spectating so outcome semantics cannot use the team of the currently spectated player.
 
 Supplementary state is allowed to improve knowledge, never to become a hidden-information oracle. A future provider may only supply ordinary player-visible aggregate information through a supported, external, non-invasive mechanism.
 
@@ -226,9 +295,11 @@ CS2 GSI
   -> state normaliser                [working first pass]
   -> transition / factual events     [working first pass]
   -> evidence-aware semantics        [working first pass]
+  -> lifecycle context               [working]
   -> live event pipeline             [working]
   -> supplementary fusion contract   [working, provider unplugged]
-  -> supported Panorama bridge?      [research only]
+  -> cross-source record/replay       [working]
+  -> supported Panorama bridge?      [focused research]
   -> director rule engine
   -> precise audio scheduler
   -> adaptive soundtrack engine
