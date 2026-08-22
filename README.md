@@ -2,57 +2,49 @@
 
 **Promator** is an experimental adaptive-audio director for Counter-Strike 2.
 
-This repository starts deliberately smaller than the eventual idea. **Milestone 0 is a GSI telemetry recorder/profiler** whose job is to establish what current CS2 sends to a normal external companion application and when it arrives.
+The project is deliberately building the telemetry spine before the audio machinery. Current prototype **0.0.2** records current CS2 Game State Integration traffic, replays old/new sessions, normalizes the safe active-player subset, and derives a first deterministic event stream.
 
 No audio engine is included yet. That is intentional.
 
-## Prototype 0.0.1: GSI Probe
+## Prototype 0.0.2
 
-The probe:
+The probe now:
 
 - listens only on `127.0.0.1`;
-- accepts CS2 Game State Integration HTTP POSTs;
 - timestamps receive activity using `QueryPerformanceCounter` on Windows;
-- stores every raw JSON snapshot unchanged;
-- records an append-only timeline with accept/body/ACK/persist timing;
-- acknowledges GSI **before disk I/O** and without gameplay interpretation or audio work;
-- replays the captured snapshot timing later without CS2 running.
+- acknowledges GSI before persistence or interpretation;
+- queues persistence on a separate worker so disk stalls cannot delay the next `accept()` timestamp;
+- stores raw payload bytes in one packed `raw.gsi` stream to reduce tiny-file disk overhead;
+- replays both 0.0.1 per-file sessions and 0.0.2 packed sessions;
+- normalizes active-player state only when `player.steamid == provider.steamid`;
+- derives first-pass events such as round/freeze transitions, damage/death, kills/headshots, ace, MVP, bomb plant, halftime, team swap and game over;
+- exposes `analyze` to print event batches from a recorded session;
+- includes anonymized regression tests based on the first real four-round capture.
+
+See [`docs/SESSION_001_FINDINGS.md`](docs/SESSION_001_FINDINGS.md) for what the first real session taught us.
 
 ## Get the Windows build without a local toolchain
 
-GitHub Actions is the default build path for the prototype. Every push to `main` builds the Windows x64/MSVC version, runs a QPC clock smoke test, and uploads a portable ZIP artifact.
+GitHub Actions is the default build path. Every push to `main` builds Windows x64/MSVC, runs the regression suite plus the QPC smoke test, and uploads a portable artifact.
 
-1. Open the repository's **Actions** tab.
-2. Open the latest successful **Windows Build** run.
-3. Download the `CSPromator-0.0.1-windows-x64` artifact.
-4. Extract `CSPromator-0.0.1-windows-x64.zip` from the downloaded artifact.
+1. Open **Actions**.
+2. Open the latest successful **Windows Build**.
+3. Download `CSPromator-0.0.2-windows-x64`.
+4. Extract the artifact and run the probe directly.
 
-The portable package contains the probe executable, GSI configuration, installer script, README, and documentation. No Visual Studio or CMake installation is required on the target machine.
+No Visual Studio or CMake installation is required on the target machine.
 
-The workflow can also be started manually with **Actions → Windows Build → Run workflow**.
-
-### Optional local build on Windows
-
-Requirements:
-
-- Windows 10/11 x64
-- Visual Studio 2022 with Desktop development with C++
-- CMake 3.24+
+### Optional local build
 
 ```powershell
 cmake -S . -B build -A x64
 cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-Binary:
+## Install the GSI configuration
 
-```text
-build\Release\cspromator-probe.exe
-```
-
-### Install the GSI probe configuration
-
-Either copy:
+Copy:
 
 ```text
 config\gamestate_integration_cspromator.cfg
@@ -67,69 +59,67 @@ to:
 or run:
 
 ```powershell
-.\scripts\install-gsi.ps1 -Cs2GameRoot "C:\...\steamapps\common\Counter-Strike Global Offensive\game"
+.\install-gsi.ps1 -Cs2GameRoot "C:\...\steamapps\common\Counter-Strike Global Offensive\game"
 ```
 
 Restart CS2 if it was already open.
 
-### Record
-
-From the portable GitHub Actions package:
+## Record
 
 ```powershell
 .\cspromator-probe.exe record 3010 sessions
 ```
 
-From a local CMake build:
-
-```powershell
-.\build\Release\cspromator-probe.exe record 3010 sessions
-```
-
-A session looks like:
+0.0.2 session layout:
 
 ```text
 sessions/session_YYYYMMDD_HHMMSS/
   metadata.json
   timeline.tsv
-  raw/
-    00000001.json
-    00000002.json
-    ...
+  raw.gsi
 ```
 
-### Replay
+Stop with `Ctrl+C`; Promator drains the persistence queue before exit.
 
-Portable package:
-
-```powershell
-.\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 1.0
-```
-
-Fast replay:
+## Replay
 
 ```powershell
 .\cspromator-probe.exe replay sessions\session_YYYYMMDD_HHMMSS 10
 ```
 
-Append `dump` to print each raw payload during replay.
+Append `dump` to print raw payloads. v0.0.1 session folders containing `raw/*.json` remain supported.
 
-## Why the first version is this boring
+## Analyze an event stream
 
-CSPromator's eventual path is roughly:
+```powershell
+.\cspromator-probe.exe analyze sessions\session_YYYYMMDD_HHMMSS
+```
+
+Events are emitted as **batches per GSI snapshot**, because real CS2 can report kill, ace, MVP, round-end and halftime changes in the same payload.
+
+## Current trust boundary
+
+CSPromator does not assume top-level `player` always means the local user. After death, CS2 can make that object follow a spectated player. Local-player counters are therefore accepted only when:
+
+```text
+player.steamid == provider.steamid
+```
+
+Likewise, movement and spectator-only world state are not fabricated when active-player GSI does not provide them.
+
+## Road ahead
 
 ```text
 CS2 GSI
-  -> raw recorder
-  -> state normaliser
-  -> transition / derived-event engine
+  -> raw recorder                    [working]
+  -> state normaliser                [first pass]
+  -> transition / derived events     [first pass]
+  -> live event pipeline
   -> director rule engine
   -> precise audio scheduler
   -> adaptive soundtrack engine
 ```
 
-The first four arrows are useless if the first one is poorly understood. We therefore measure modern CS2 behaviour before building musical logic around decade-old assumptions.
-
 ## Historical reference policy
 
-The original CS-Jukebox project is useful historical evidence, but CSPromator is a clean implementation. We may learn from its behaviour and pain points; we do not copy its CSGSI library, timers, playback engine, state machine, or music-kit architecture.
+The original CS-Jukebox project is historical evidence only. CSPromator is a clean implementation; its old CSGSI library, timers, playback engine, state machine and music-kit architecture are not copied.

@@ -211,6 +211,29 @@ int GsiHttpServer::run() {
     std::cout << "[PROMATOR] Press Ctrl+C to stop.\n";
 
     while (!stop_requested_.load()) {
+        // Poll the listening socket with a short timeout so Ctrl+C can request
+        // a graceful stop and allow the persistence worker to drain.
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(server, &read_set);
+        timeval timeout{};
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100'000;
+#ifdef _WIN32
+        const int ready = select(0, &read_set, nullptr, nullptr, &timeout);
+#else
+        const int ready = select(server + 1, &read_set, nullptr, nullptr, &timeout);
+#endif
+        if (ready == 0) {
+            continue;
+        }
+        if (ready < 0) {
+            if (stop_requested_.load()) {
+                break;
+            }
+            continue;
+        }
+
         sockaddr_in client_addr{};
 #ifdef _WIN32
         int client_len = sizeof(client_addr);
@@ -253,18 +276,19 @@ int GsiHttpServer::run() {
         const auto ack_sent_tick = clock_.now();
         close_socket(client);
 
-        // Persistence happens after the GSI request has been released.
-        const auto record = recorder_.append(accepted_tick, body_complete_tick, ack_sent_tick, request->body);
+        // Persistence is queued after the GSI request has been released. The
+        // receiver immediately returns to accept(); disk stalls cannot delay the
+        // next receive timestamp.
+        const auto record = recorder_.enqueue(accepted_tick, body_complete_tick, ack_sent_tick, request->body);
 
         const double ingress_ms = clock_.seconds_between(accepted_tick, body_complete_tick) * 1000.0;
         const double ack_ms = clock_.seconds_between(accepted_tick, ack_sent_tick) * 1000.0;
-        const double persist_ms = clock_.seconds_between(ack_sent_tick, record.persist_complete_tick) * 1000.0;
         std::cout << "[GSI] #" << record.sequence
                   << " t+" << (record.relative_us / 1000.0) << " ms"
                   << " bytes=" << record.body_bytes
                   << " ingress=" << ingress_ms << " ms"
                   << " ack=" << ack_ms << " ms"
-                  << " persist=" << persist_ms << " ms\n";
+                  << " queued\n";
     }
 
     close_socket(server);

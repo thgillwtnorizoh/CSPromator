@@ -25,6 +25,9 @@ jobs:
       - name: Build Release
         run: cmake --build build --config Release --parallel
 
+      - name: Run regression tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
       - name: Smoke-test QPC clock
         run: .\build\Release\cspromator-probe.exe clock
 
@@ -44,7 +47,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: CSPromator-0.0.1-windows-x64
+          name: CSPromator-0.0.2-windows-x64
           path: package/
           if-no-files-found: error
           retention-days: 14
