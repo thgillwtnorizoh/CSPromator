@@ -13,6 +13,7 @@ add_library(cspromator-core STATIC
     src/supplementary_state.cpp
     src/semantic_resolver.cpp
     src/live_event_pipeline.cpp
+    src/telemetry_ingress.cpp
 )
 
 target_include_directories(cspromator-core PUBLIC include)
