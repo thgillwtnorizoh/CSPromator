@@ -415,8 +415,13 @@ std::vector<PromatorEvent> SemanticResolver::process_supplementary(
         return events;
     }
     if (last_supplement_us_ && snapshot.relative_us < *last_supplement_us_) {
-        // Cross-source state must never time-travel. A future live adapter should
-        // QPC-stamp at observation and submit in monotonic order.
+        return events;
+    }
+    if (latest_state_ && snapshot.relative_us < latest_state_->relative_us) {
+        // The observation was captured before GSI state that has already been
+        // processed. Accepting it now would make the live semantic state move
+        // backward in time. Record it for diagnostics/replay, but ignore it in
+        // the resolver. A future provider should publish promptly.
         return events;
     }
 
