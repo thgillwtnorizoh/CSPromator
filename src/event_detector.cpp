@@ -25,6 +25,8 @@ std::string_view to_string(EventType type) {
         case EventType::FreezeEnded: return "FREEZE_ENDED";
         case EventType::RoundStarted: return "ROUND_STARTED";
         case EventType::RoundEnded: return "ROUND_ENDED";
+        case EventType::RoundWon: return "ROUND_WON";
+        case EventType::RoundLost: return "ROUND_LOST";
         case EventType::TeamChanged: return "TEAM_CHANGED";
         case EventType::LocalPlayerLost: return "LOCAL_PLAYER_LOST";
         case EventType::LocalPlayerRestored: return "LOCAL_PLAYER_RESTORED";
@@ -33,6 +35,8 @@ std::string_view to_string(EventType type) {
         case EventType::PlayerDied: return "PLAYER_DIED";
         case EventType::PlayerKill: return "PLAYER_KILL";
         case EventType::PlayerHeadshotKill: return "PLAYER_HEADSHOT_KILL";
+        case EventType::PlayerAssist: return "PLAYER_ASSIST";
+        case EventType::PlayerFlashed: return "PLAYER_FLASHED";
         case EventType::Ace: return "ACE";
         case EventType::MvpGained: return "MVP_GAINED";
         case EventType::BombPlanted: return "BOMB_PLANTED";
@@ -68,6 +72,16 @@ PromatorEvent EventDetector::make_event(EventType type,
     return event;
 }
 
+void EventDetector::clear_match_memory() {
+    last_ended_round_.reset();
+    last_outcome_round_.reset();
+    last_known_local_hp_.reset();
+    last_known_local_mvps_.reset();
+    last_known_local_assists_.reset();
+    last_known_local_team_.reset();
+    local_observation_lost_ = false;
+}
+
 std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& current) {
     std::vector<PromatorEvent> events;
     if (!current.payload_valid) {
@@ -81,6 +95,8 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
         if (current.local_player_valid) {
             if (current.health) last_known_local_hp_ = current.health;
             if (current.mvps) last_known_local_mvps_ = current.mvps;
+            if (current.assists) last_known_local_assists_ = current.assists;
+            if (current.player_team) last_known_local_team_ = current.player_team;
         }
         previous_ = current;
         return events;
@@ -89,19 +105,27 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
     const auto& previous = *previous_;
 
     if (!previous.map_name && current.map_name) {
+        clear_match_memory();
         events.push_back(make_event(EventType::MatchEntered, current));
     } else if (previous.map_name && !current.map_name) {
         events.push_back(make_event(EventType::MatchLeft, current));
+        clear_match_memory();
+        previous_ = current;
+        return events;
     }
 
     const bool current_is_other_observed_player =
         current.provider_steamid && current.observed_steamid && !current.local_player_valid;
-    const bool previous_was_other_observed_player =
-        previous.provider_steamid && previous.observed_steamid && !previous.local_player_valid;
 
-    if (previous.local_player_valid && current_is_other_observed_player) {
+    // Observation loss is sticky. Real CS2 can go local -> spectated bot -> no
+    // player object -> local between rounds. A pairwise detector loses the trail.
+    if (current_is_other_observed_player && !local_observation_lost_) {
         events.push_back(make_event(EventType::LocalPlayerLost, current));
-    } else if (previous_was_other_observed_player && current.local_player_valid) {
+        local_observation_lost_ = true;
+    }
+
+    const bool restoring_local_player = local_observation_lost_ && current.local_player_valid;
+    if (restoring_local_player) {
         events.push_back(make_event(EventType::LocalPlayerRestored, current));
         if (last_known_local_hp_ && *last_known_local_hp_ == 0 && current.health && *current.health > 0) {
             events.push_back(make_event(EventType::PlayerRespawned, current));
@@ -112,11 +136,18 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
             event.value = *current.mvps;
             events.push_back(std::move(event));
         }
+        if (last_known_local_assists_ && current.assists && *current.assists > *last_known_local_assists_) {
+            auto event = make_event(EventType::PlayerAssist, current);
+            event.amount = *current.assists - *last_known_local_assists_;
+            event.value = *current.assists;
+            events.push_back(std::move(event));
+        }
+        local_observation_lost_ = false;
     }
 
     // Local-player numeric state is comparable only while both snapshots refer
-    // to the provider SteamID. This prevents spectator targets from looking
-    // like impossible negative kills, healing, or MVP loss.
+    // to the provider SteamID. Spectator targets must never become fake local
+    // healing, negative kills, assists, or MVP changes.
     if (previous.local_player_valid && current.local_player_valid) {
         if (previous.health && current.health && *current.health < *previous.health) {
             auto event = make_event(EventType::PlayerDamaged, current);
@@ -126,6 +157,8 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
         }
         if (previous.health && current.health && *previous.health > 0 && *current.health == 0) {
             events.push_back(make_event(EventType::PlayerDied, current));
+        } else if (previous.health && current.health && *previous.health == 0 && *current.health > 0) {
+            events.push_back(make_event(EventType::PlayerRespawned, current));
         }
 
         if (previous.round_kills && current.round_kills && *current.round_kills > *previous.round_kills) {
@@ -147,6 +180,20 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
             auto event = make_event(EventType::PlayerHeadshotKill, current);
             event.amount = *current.round_headshot_kills - *previous.round_headshot_kills;
             event.value = *current.round_headshot_kills;
+            events.push_back(std::move(event));
+        }
+
+        if (previous.assists && current.assists && *current.assists > *previous.assists) {
+            auto event = make_event(EventType::PlayerAssist, current);
+            event.amount = *current.assists - *previous.assists;
+            event.value = *current.assists;
+            events.push_back(std::move(event));
+        }
+
+        if (current.flashed && *current.flashed > 0 &&
+            (!previous.flashed || *previous.flashed <= 0)) {
+            auto event = make_event(EventType::PlayerFlashed, current);
+            event.value = *current.flashed;
             events.push_back(std::move(event));
         }
 
@@ -178,17 +225,37 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
     const bool round_end_evidence = previous_live &&
                                     (phase_over || round_advanced || winner_appeared || game_over_started);
 
+    std::optional<int> ended_round;
     if (round_end_evidence) {
-        const int ended_round = previous.map_round.value_or(current.map_round.value_or(-1));
-        if (!last_ended_round_ || *last_ended_round_ != ended_round) {
+        ended_round = previous.map_round.value_or(current.map_round.value_or(-1));
+        if (!last_ended_round_ || *last_ended_round_ != *ended_round) {
             auto event = make_event(EventType::RoundEnded, current);
-            event.value = ended_round;
+            event.value = *ended_round;
             if (current.round_winner) {
                 event.to = *current.round_winner;
             }
             events.push_back(std::move(event));
-            last_ended_round_ = ended_round;
+            last_ended_round_ = *ended_round;
         }
+    }
+
+    // Determine the result from the last known local team, not the top-level
+    // player team, because round end can arrive while we are spectating a bot.
+    const auto outcome_team = last_known_local_team_
+        ? last_known_local_team_
+        : (current.local_player_valid ? current.player_team : std::optional<std::string>{});
+    const std::optional<int> outcome_round = ended_round ? ended_round : last_ended_round_;
+    if (current.round_winner && outcome_team && outcome_round &&
+        (round_end_evidence || winner_appeared) &&
+        (!last_outcome_round_ || *last_outcome_round_ != *outcome_round)) {
+        auto event = make_event(
+            *current.round_winner == *outcome_team ? EventType::RoundWon : EventType::RoundLost,
+            current);
+        event.value = *outcome_round;
+        event.from = *outcome_team;
+        event.to = *current.round_winner;
+        events.push_back(std::move(event));
+        last_outcome_round_ = *outcome_round;
     }
 
     if (changed_to(previous.round_phase, current.round_phase, "freezetime") &&
@@ -208,10 +275,10 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
         events.push_back(make_event(EventType::HalftimeEnded, current));
     }
 
-    if (previous.local_player_valid && current.local_player_valid &&
-        previous.player_team && current.player_team && *previous.player_team != *current.player_team) {
+    if (current.local_player_valid && current.player_team && last_known_local_team_ &&
+        *current.player_team != *last_known_local_team_) {
         auto event = make_event(EventType::TeamChanged, current);
-        event.from = *previous.player_team;
+        event.from = *last_known_local_team_;
         event.to = *current.player_team;
         events.push_back(std::move(event));
     }
@@ -223,6 +290,8 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
     if (current.local_player_valid) {
         if (current.health) last_known_local_hp_ = current.health;
         if (current.mvps) last_known_local_mvps_ = current.mvps;
+        if (current.assists) last_known_local_assists_ = current.assists;
+        if (current.player_team) last_known_local_team_ = current.player_team;
     }
     previous_ = current;
     return events;
@@ -230,9 +299,7 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
 
 void EventDetector::reset() {
     previous_.reset();
-    last_ended_round_.reset();
-    last_known_local_hp_.reset();
-    last_known_local_mvps_.reset();
+    clear_match_memory();
 }
 
 } // namespace cspromator
