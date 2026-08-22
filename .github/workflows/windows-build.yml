@@ -40,12 +40,11 @@ jobs:
           Copy-Item scripts\install-gsi.ps1 package\
           Copy-Item README.md package\
           Copy-Item docs package\docs -Recurse
-          Compress-Archive -Path package\* -DestinationPath CSPromator-0.0.1-windows-x64.zip -Force
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: CSPromator-0.0.1-windows-x64
-          path: CSPromator-0.0.1-windows-x64.zip
+          path: package/
           if-no-files-found: error
           retention-days: 14
