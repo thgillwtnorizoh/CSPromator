@@ -3,7 +3,9 @@
 #include "cspromator/game_state.hpp"
 #include "cspromator/http_server.hpp"
 #include "cspromator/live_event_pipeline.hpp"
+#include "cspromator/semantic_resolver.hpp"
 #include "cspromator/session.hpp"
+#include "cspromator/supplementary_state.hpp"
 
 #include <chrono>
 #include <csignal>
@@ -28,7 +30,7 @@ void handle_signal(int) {
 
 void print_usage() {
     std::cout
-        << "CSPromator Probe 0.0.6\n\n"
+        << "CSPromator Probe 0.0.7\n\n"
         << "Usage:\n"
         << "  cspromator-probe record [port] [sessions-dir]\n"
         << "  cspromator-probe replay <session-dir> [speed] [dump]\n"
@@ -38,6 +40,10 @@ void print_usage() {
         << "  cspromator-probe record 3010 sessions\n"
         << "  cspromator-probe replay sessions/session_20260822_110000 10\n"
         << "  cspromator-probe analyze sessions/session_20260822_110000\n";
+}
+
+std::string optional_count(const std::optional<int>& value) {
+    return value ? std::to_string(*value) : "?";
 }
 
 int command_clock() {
@@ -110,29 +116,60 @@ int command_replay(int argc, char** argv) {
     }
     const bool dump = argc >= 5 && std::string(argv[4]) == "dump";
 
-    const auto entries = cspromator::load_timeline(session);
-    if (entries.empty()) {
-        std::cout << "[REPLAY] No snapshots.\n";
+    const auto stream = cspromator::load_replay_stream(session);
+    if (stream.empty()) {
+        std::cout << "[REPLAY] No recorded observations.\n";
         return 0;
     }
 
-    std::cout << "[REPLAY] " << entries.size() << " snapshots at " << speed << "x\n";
-    std::uint64_t previous_us = entries.front().record.relative_us;
-    for (std::size_t i = 0; i < entries.size(); ++i) {
-        const auto& entry = entries[i];
+    std::size_t gsi_count = 0;
+    std::size_t supplementary_count = 0;
+    for (const auto& item : stream) {
+        if (item.kind == cspromator::ReplayItemKind::Gsi) ++gsi_count;
+        else ++supplementary_count;
+    }
+
+    std::cout << "[REPLAY] observations=" << stream.size()
+              << " gsi=" << gsi_count
+              << " supplementary=" << supplementary_count
+              << " speed=" << speed << "x\n";
+
+    std::uint64_t previous_us = stream.front().relative_us;
+    for (std::size_t i = 0; i < stream.size(); ++i) {
+        const auto& item = stream[i];
         if (i > 0) {
-            const auto delta_us = entry.record.relative_us - previous_us;
+            const auto delta_us = item.relative_us - previous_us;
             const auto scaled = static_cast<std::uint64_t>(static_cast<double>(delta_us) / speed);
             std::this_thread::sleep_for(std::chrono::microseconds(scaled));
         }
-        previous_us = entry.record.relative_us;
+        previous_us = item.relative_us;
 
-        std::cout << "[REPLAY] #" << entry.record.sequence
-                  << " t+" << (entry.record.relative_us / 1000.0) << " ms"
-                  << " bytes=" << entry.record.body_bytes << "\n";
-        if (dump) {
-            std::cout << cspromator::load_replay_body(entry) << "\n";
+        if (item.kind == cspromator::ReplayItemKind::Gsi) {
+            const auto& entry = *item.gsi;
+            std::cout << "[REPLAY GSI] #" << entry.record.sequence
+                      << " order=" << entry.record.ingress_order
+                      << " t+" << (entry.record.relative_us / 1000.0) << " ms"
+                      << " bytes=" << entry.record.body_bytes << "\n";
+            if (dump) {
+                std::cout << cspromator::load_replay_body(entry) << "\n";
+            }
+            continue;
         }
+
+        const auto& entry = *item.supplementary;
+        const auto& snapshot = entry.record.snapshot;
+        std::cout << "[REPLAY SUPPLEMENT] #" << snapshot.sequence
+                  << " order=" << entry.record.ingress_order
+                  << " t+" << (snapshot.relative_us / 1000.0) << " ms"
+                  << " recorded-source=" << cspromator::to_string(entry.recorded_source)
+                  << " CT=" << optional_count(snapshot.teams.ct_alive)
+                  << "/" << optional_count(snapshot.teams.ct_total)
+                  << " T=" << optional_count(snapshot.teams.t_alive)
+                  << "/" << optional_count(snapshot.teams.t_total);
+        if (snapshot.roster_revision) {
+            std::cout << " roster-revision=" << *snapshot.roster_revision;
+        }
+        std::cout << "\n";
     }
     return 0;
 }
@@ -142,34 +179,61 @@ int command_analyze(int argc, char** argv) {
         throw std::runtime_error("analyze requires <session-dir>");
     }
     const std::filesystem::path session = argv[2];
-    const auto entries = cspromator::load_timeline(session);
+    const auto stream = cspromator::load_replay_stream(session);
     cspromator::EventDetector detector;
+    cspromator::SemanticResolver resolver;
     std::map<cspromator::EventType, std::size_t> counts;
     std::size_t invalid_payloads = 0;
+    std::size_t gsi_snapshots = 0;
+    std::size_t supplementary_snapshots = 0;
 
-    for (const auto& entry : entries) {
-        const auto body = cspromator::load_replay_body(entry);
-        const auto state = cspromator::normalize_gsi(
-            body, entry.record.sequence, entry.record.relative_us);
-        if (!state.payload_valid) {
-            ++invalid_payloads;
-            continue;
+    for (const auto& item : stream) {
+        std::vector<cspromator::PromatorEvent> events;
+
+        if (item.kind == cspromator::ReplayItemKind::Gsi) {
+            ++gsi_snapshots;
+            const auto& entry = *item.gsi;
+            const auto body = cspromator::load_replay_body(entry);
+            const auto state = cspromator::normalize_gsi(
+                body, entry.record.sequence, entry.record.relative_us);
+            if (!state.payload_valid) {
+                ++invalid_payloads;
+                continue;
+            }
+
+            events = detector.process(state);
+            auto semantic = resolver.process_gsi(state, events);
+            events.insert(events.end(), semantic.begin(), semantic.end());
+
+            if (!events.empty()) {
+                std::cout << "[BATCH GSI] #" << state.sequence
+                          << " order=" << entry.record.ingress_order
+                          << " t+" << (state.relative_us / 1000.0) << " ms"
+                          << " lifecycle=" << cspromator::to_string(resolver.context().lifecycle)
+                          << "\n";
+            }
+        } else {
+            ++supplementary_snapshots;
+            const auto& entry = *item.supplementary;
+            events = resolver.process_supplementary(entry.record.snapshot);
+            if (!events.empty()) {
+                std::cout << "[BATCH SUPPLEMENT] #" << entry.record.snapshot.sequence
+                          << " order=" << entry.record.ingress_order
+                          << " t+" << (entry.record.snapshot.relative_us / 1000.0) << " ms"
+                          << " recorded-source=" << cspromator::to_string(entry.recorded_source)
+                          << "\n";
+            }
         }
 
-        const auto events = detector.process(state);
-        if (events.empty()) {
-            continue;
-        }
-
-        std::cout << "[BATCH] #" << state.sequence
-                  << " t+" << (state.relative_us / 1000.0) << " ms\n";
         for (const auto& event : events) {
             ++counts[event.type];
             std::cout << "  " << cspromator::describe_event(event) << "\n";
         }
     }
 
-    std::cout << "\n[ANALYZE] snapshots=" << entries.size()
+    std::cout << "\n[ANALYZE] observations=" << stream.size()
+              << " gsi=" << gsi_snapshots
+              << " supplementary=" << supplementary_snapshots
               << " invalid=" << invalid_payloads << "\n";
     for (const auto& [type, count] : counts) {
         std::cout << "  " << cspromator::to_string(type) << "=" << count << "\n";
