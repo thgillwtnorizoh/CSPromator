@@ -28,7 +28,7 @@ void handle_signal(int) {
 
 void print_usage() {
     std::cout
-        << "CSPromator Probe 0.0.3\n\n"
+        << "CSPromator Probe 0.0.4\n\n"
         << "Usage:\n"
         << "  cspromator-probe record [port] [sessions-dir]\n"
         << "  cspromator-probe replay <session-dir> [speed] [dump]\n"

@@ -36,6 +36,7 @@ struct NormalizedGameState {
     std::optional<int> equipment_value;
     std::optional<int> flashed;
     std::optional<int> smoked;
+    std::optional<int> burning;
     std::optional<int> round_kills;
     std::optional<int> round_headshot_kills;
     std::optional<int> kills;

@@ -80,7 +80,7 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
     meta << "{\n"
          << "  \"schema_version\": 2,\n"
          << "  \"application\": \"CSPromator Probe\",\n"
-         << "  \"application_version\": \"0.0.3\",\n"
+         << "  \"application_version\": \"0.0.4\",\n"
          << "  \"storage\": \"packed-raw-v1\",\n"
          << "  \"clock\": {\"name\": \"" << json_escape(info.name)
          << "\", \"frequency\": " << info.frequency << "},\n"
@@ -106,8 +106,6 @@ SessionRecorder::~SessionRecorder() {
     try {
         stop_and_flush();
     } catch (...) {
-        // Destructors must not throw. Explicit stop_and_flush() still reports
-        // persistence failures to the command path.
     }
 }
 

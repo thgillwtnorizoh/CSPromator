@@ -37,9 +37,12 @@ std::string_view to_string(EventType type) {
         case EventType::PlayerHeadshotKill: return "PLAYER_HEADSHOT_KILL";
         case EventType::PlayerAssist: return "PLAYER_ASSIST";
         case EventType::PlayerFlashed: return "PLAYER_FLASHED";
+        case EventType::PlayerSmoked: return "PLAYER_SMOKED";
+        case EventType::PlayerBurning: return "PLAYER_BURNING";
         case EventType::Ace: return "ACE";
         case EventType::MvpGained: return "MVP_GAINED";
         case EventType::BombPlanted: return "BOMB_PLANTED";
+        case EventType::BombDefused: return "BOMB_DEFUSED";
         case EventType::BombStateCleared: return "BOMB_STATE_CLEARED";
         case EventType::HalftimeStarted: return "HALFTIME_STARTED";
         case EventType::HalftimeEnded: return "HALFTIME_ENDED";
@@ -117,8 +120,6 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
     const bool current_is_other_observed_player =
         current.provider_steamid && current.observed_steamid && !current.local_player_valid;
 
-    // Observation loss is sticky. Real CS2 can go local -> spectated bot -> no
-    // player object -> local between rounds. A pairwise detector loses the trail.
     if (current_is_other_observed_player && !local_observation_lost_) {
         events.push_back(make_event(EventType::LocalPlayerLost, current));
         local_observation_lost_ = true;
@@ -145,9 +146,6 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
         local_observation_lost_ = false;
     }
 
-    // Local-player numeric state is comparable only while both snapshots refer
-    // to the provider SteamID. Spectator targets must never become fake local
-    // healing, negative kills, assists, or MVP changes.
     if (previous.local_player_valid && current.local_player_valid) {
         if (previous.health && current.health && *current.health < *previous.health) {
             auto event = make_event(EventType::PlayerDamaged, current);
@@ -197,6 +195,20 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
             events.push_back(std::move(event));
         }
 
+        if (current.smoked && *current.smoked > 0 &&
+            (!previous.smoked || *previous.smoked <= 0)) {
+            auto event = make_event(EventType::PlayerSmoked, current);
+            event.value = *current.smoked;
+            events.push_back(std::move(event));
+        }
+
+        if (current.burning && *current.burning > 0 &&
+            (!previous.burning || *previous.burning <= 0)) {
+            auto event = make_event(EventType::PlayerBurning, current);
+            event.value = *current.burning;
+            events.push_back(std::move(event));
+        }
+
         if (previous.mvps && current.mvps && *current.mvps > *previous.mvps) {
             auto event = make_event(EventType::MvpGained, current);
             event.amount = *current.mvps - *previous.mvps;
@@ -207,7 +219,11 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
 
     if (changed_to(previous.bomb_state, current.bomb_state, "planted")) {
         events.push_back(make_event(EventType::BombPlanted, current));
-    } else if (equals(previous.bomb_state, "planted") && !equals(current.bomb_state, "planted")) {
+    }
+    if (changed_to(previous.bomb_state, current.bomb_state, "defused")) {
+        events.push_back(make_event(EventType::BombDefused, current));
+    }
+    if (equals(previous.bomb_state, "planted") && !equals(current.bomb_state, "planted")) {
         events.push_back(make_event(EventType::BombStateCleared, current));
     }
 
@@ -239,8 +255,6 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
         }
     }
 
-    // Determine the result from the last known local team, not the top-level
-    // player team, because round end can arrive while we are spectating a bot.
     const auto outcome_team = last_known_local_team_
         ? last_known_local_team_
         : (current.local_player_valid ? current.player_team : std::optional<std::string>{});
