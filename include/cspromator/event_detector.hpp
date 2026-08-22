@@ -34,6 +34,9 @@ enum class EventType {
     PlayerBurning,
     AceCandidate,
     Ace,
+    ClutchStarted,
+    ClutchUpdated,
+    ClutchEnded,
     MvpGained,
     BombPlanted,
     BombDefused,
@@ -50,9 +53,31 @@ enum class EventEvidence {
     Heuristic,
 };
 
+enum class EventSource : std::uint8_t {
+    None = 0,
+    Gsi = 1U << 0,
+    ModeRules = 1U << 1,
+    SupplementaryState = 1U << 2,
+};
+
+constexpr EventSource operator|(EventSource lhs, EventSource rhs) {
+    return static_cast<EventSource>(
+        static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+}
+
+constexpr EventSource operator&(EventSource lhs, EventSource rhs) {
+    return static_cast<EventSource>(
+        static_cast<std::uint8_t>(lhs) & static_cast<std::uint8_t>(rhs));
+}
+
+constexpr bool has_source(EventSource sources, EventSource source) {
+    return (sources & source) != EventSource::None;
+}
+
 struct PromatorEvent {
     EventType type{};
     EventEvidence evidence{EventEvidence::Deterministic};
+    EventSource sources{EventSource::Gsi};
     std::uint64_t sequence{};
     std::uint64_t relative_us{};
     std::optional<int> amount;
@@ -63,6 +88,7 @@ struct PromatorEvent {
 
 std::string_view to_string(EventType type);
 std::string_view to_string(EventEvidence evidence);
+std::string describe_sources(EventSource sources);
 std::string describe_event(const PromatorEvent& event);
 
 class EventDetector {
