@@ -1,8 +1,8 @@
 # Supplementary-state architecture
 
-CSPromator 0.0.6 introduces the plumbing for optional player-visible aggregate state without adding a live Panorama provider.
+CSPromator 0.0.7 keeps optional player-visible aggregate state separate from the required GSI factual spine and now gives that supplementary state deterministic session recording/replay before any live Panorama provider exists.
 
-The design goal is deliberately asymmetric:
+The design remains deliberately asymmetric:
 
 ```text
 GSI                           supplementary state
@@ -43,7 +43,8 @@ No player names, Steam IDs, positions, inventories or hidden enemy state are req
 
 A `SupplementarySnapshot` also carries:
 
-- a monotonic observation time (`relative_us`, with an `observed_tick` slot for a future live provider);
+- an observation tick in the Promator QPC clock domain;
+- a session-relative timestamp;
 - a source kind;
 - an optional `roster_revision`.
 
@@ -65,7 +66,7 @@ This keeps Panorama optional and prevents it from becoming a second telemetry fi
 
 ## Evidence strength and evidence source are separate
 
-0.0.5 introduced evidence strength. 0.0.6 adds explicit source provenance.
+0.0.5 introduced evidence strength. 0.0.6 added explicit source provenance.
 
 Examples:
 
@@ -130,13 +131,118 @@ alive_delta = local_alive - enemy_alive
 
 This lets a future Director consume team balance as state rather than forcing an audio event for every numeric fluctuation.
 
+## Lifecycle context
+
+0.0.7 adds match lifecycle beside semantic team state:
+
+```text
+detached
+warmup
+freezetime
+live-round
+post-round
+gameover
+other
+```
+
+Factual events do not change names across lifecycle phases. For example, warmup and post-round kills remain `PLAYER_KILL`, while a future Director can use:
+
+```text
+scored_round_active == true
+```
+
+to restrict combat reactions to actual scored live rounds.
+
+Match leave resets lifecycle, local acquisition memory, ace/clutch state and all supplementary knowledge before another map can attach.
+
 ## Timing and ordering
 
-Supplementary observations must use the same Promator monotonic-clock domain as GSI when a live provider is eventually implemented.
+Supplementary observations use the same Promator monotonic-clock domain as GSI.
 
-The resolver rejects supplementary snapshots that arrive older than the most recently accepted supplementary timestamp. Cross-source state is not allowed to time-travel.
+The resolver rejects supplementary snapshots older than the most recently accepted supplementary timestamp. Cross-source state is not allowed to time-travel.
 
-No production freshness timeout is chosen in 0.0.6. The configuration supports one, but a real provider must be measured before selecting it.
+No production freshness timeout is chosen yet. The configuration supports one, but a real provider must be measured before selecting it.
+
+### Shared ingress order
+
+Schema-v3 sessions assign every queued GSI or supplementary record one monotonically increasing `ingress_order`.
+
+```text
+order 101  GSI
+order 102  supplementary
+order 103  supplementary
+order 104  GSI
+```
+
+`relative_us` remains the time axis. `ingress_order` is the deterministic tie-breaker and preserves the order in which Promator accepted cross-source observations.
+
+Older v1/v2 sessions contain GSI only, so replay safely synthesizes their ingress order from the original GSI sequence number.
+
+## Schema-v3 recording
+
+New 0.0.7 sessions use:
+
+```text
+session_YYYYMMDD_HHMMSS/
+  metadata.json
+  timeline.tsv
+  raw.gsi
+  supplementary.timeline.tsv
+```
+
+GSI raw bytes remain unchanged in packed `raw.gsi`.
+
+The supplementary file contains only compact rows:
+
+```text
+ingress_order
+sequence
+observed_tick
+persist_complete_tick
+relative_us
+source
+roster_revision
+ct_alive
+t_alive
+ct_total
+t_total
+```
+
+There is deliberately no giant raw Panorama dump.
+
+The public 0.0.7 CLI still has no live supplementary provider, so ordinary GSI-only recording creates the supplementary file with only its header. The storage API exists now so a future provider cannot be shipped without recording support.
+
+## Replay provenance
+
+A recorded supplementary row stores the provider source that originally produced it, for example `synthetic` or a future `panorama-visible-state`.
+
+When loaded for replay:
+
+```text
+snapshot.source = replay
+recorded_source = original provider
+```
+
+This prevents offline replay from pretending that a live provider is currently connected while still preserving origin metadata for diagnostics.
+
+## Deterministic merged replay
+
+`load_replay_stream()` merges GSI and supplementary records by:
+
+1. `relative_us`;
+2. shared `ingress_order` as the tie-breaker.
+
+The `analyze` command now runs that merged stream through the same layers used by live interpretation:
+
+```text
+recorded GSI ----------------> EventDetector ----+
+                                                  |
+recorded supplementary ---------------------------+--> SemanticResolver
+                                                       |
+                                                    semantic output
+```
+
+This makes future ACE/clutch decisions reproducible without launching CS2 or the supplementary provider.
 
 ## Failure model
 
@@ -153,7 +259,7 @@ A future provider failure must degrade back to this exact behavior.
 
 ## Panorama boundary
 
-0.0.6 does **not** implement Panorama access.
+0.0.7 still does **not** implement Panorama access.
 
 A future live provider is acceptable only if it can obtain ordinary player-visible aggregate state through a supported, external, non-invasive mechanism.
 
@@ -166,10 +272,4 @@ Do not use:
 - stock HUD/VPK modification to insert a transmitter;
 - hidden-information APIs that expose more than an ordinary player can know.
 
-If no acceptable bridge exists, the provider stays absent and this architecture remains useful for tests and any future legitimate source.
-
-## Recording requirement for a future live provider
-
-The current session format records only GSI because 0.0.6 ships no runtime supplementary provider.
-
-Before any real supplementary provider is enabled for users, its raw observations must gain a deterministic recorded timeline so semantic decisions can be reproduced offline. A live provider must not ship first and add replayability later.
+If no acceptable bridge exists, the provider stays absent. The supplementary architecture remains useful for deterministic tests and any future legitimate source.
