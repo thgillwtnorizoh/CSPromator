@@ -246,19 +246,25 @@ int GsiHttpServer::run() {
             continue;
         }
 
-        // Persist first, but do not parse or run game logic in the request path.
-        const auto record = recorder_.append(accepted_tick, body_complete_tick, request->body);
-
+        // Acknowledge CS2 before any disk I/O or interpretation.
         constexpr std::string_view ok =
             "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         send_all(client, ok);
+        const auto ack_sent_tick = clock_.now();
         close_socket(client);
 
+        // Persistence happens after the GSI request has been released.
+        const auto record = recorder_.append(accepted_tick, body_complete_tick, ack_sent_tick, request->body);
+
         const double ingress_ms = clock_.seconds_between(accepted_tick, body_complete_tick) * 1000.0;
+        const double ack_ms = clock_.seconds_between(accepted_tick, ack_sent_tick) * 1000.0;
+        const double persist_ms = clock_.seconds_between(ack_sent_tick, record.persist_complete_tick) * 1000.0;
         std::cout << "[GSI] #" << record.sequence
                   << " t+" << (record.relative_us / 1000.0) << " ms"
                   << " bytes=" << record.body_bytes
-                  << " ingress=" << ingress_ms << " ms\n";
+                  << " ingress=" << ingress_ms << " ms"
+                  << " ack=" << ack_ms << " ms"
+                  << " persist=" << persist_ms << " ms\n";
     }
 
     close_socket(server);

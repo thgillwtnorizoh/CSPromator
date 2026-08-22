@@ -36,7 +36,7 @@ SessionRecorder
 
 ## Clock
 
-On Windows, `MonotonicClock` uses `QueryPerformanceCounter` and records the matching `QueryPerformanceFrequency` in session metadata. The prototype records both the local socket-accept timestamp and the body-complete timestamp. Neither is falsely labelled as the exact in-engine event time.
+On Windows, `MonotonicClock` uses `QueryPerformanceCounter` and records the matching `QueryPerformanceFrequency` in session metadata. The prototype records socket-accept, body-complete, acknowledgement-sent, and persistence-complete timestamps. The HTTP acknowledgement is sent before disk I/O. Neither is falsely labelled as the exact in-engine event time.
 
 ## Next layer
 

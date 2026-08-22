@@ -77,17 +77,19 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
     if (!timeline_) {
         throw std::runtime_error("Could not create session timeline.tsv");
     }
-    timeline_ << "sequence\taccepted_tick\tbody_complete_tick\trelative_us\tbody_bytes\tbody_file\n";
+    timeline_ << "sequence\taccepted_tick\tbody_complete_tick\tack_sent_tick\tpersist_complete_tick\trelative_us\tbody_bytes\tbody_file\n";
     timeline_.flush();
 }
 
 SnapshotRecord SessionRecorder::append(std::uint64_t accepted_tick,
                                        std::uint64_t body_complete_tick,
+                                       std::uint64_t ack_sent_tick,
                                        const std::string& body) {
     SnapshotRecord record{};
     record.sequence = ++sequence_;
     record.accepted_tick = accepted_tick;
     record.body_complete_tick = body_complete_tick;
+    record.ack_sent_tick = ack_sent_tick;
     record.relative_us = static_cast<std::uint64_t>(
         clock_.seconds_between(start_tick_, body_complete_tick) * 1'000'000.0);
     record.body_bytes = body.size();
@@ -100,10 +102,13 @@ SnapshotRecord SessionRecorder::append(std::uint64_t accepted_tick,
     }
     raw.write(body.data(), static_cast<std::streamsize>(body.size()));
     raw.flush();
+    record.persist_complete_tick = clock_.now();
 
     timeline_ << record.sequence << '\t'
               << record.accepted_tick << '\t'
               << record.body_complete_tick << '\t'
+              << record.ack_sent_tick << '\t'
+              << record.persist_complete_tick << '\t'
               << record.relative_us << '\t'
               << record.body_bytes << '\t'
               << record.body_filename << '\n';
@@ -131,6 +136,8 @@ std::vector<ReplayEntry> load_timeline(const std::filesystem::path& session_dire
         std::getline(row, field, '\t'); record.sequence = std::stoull(field);
         std::getline(row, field, '\t'); record.accepted_tick = std::stoull(field);
         std::getline(row, field, '\t'); record.body_complete_tick = std::stoull(field);
+        std::getline(row, field, '\t'); record.ack_sent_tick = std::stoull(field);
+        std::getline(row, field, '\t'); record.persist_complete_tick = std::stoull(field);
         std::getline(row, field, '\t'); record.relative_us = std::stoull(field);
         std::getline(row, field, '\t'); record.body_bytes = static_cast<std::size_t>(std::stoull(field));
         std::getline(row, record.body_filename, '\t');

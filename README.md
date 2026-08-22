@@ -14,8 +14,8 @@ The probe:
 - accepts CS2 Game State Integration HTTP POSTs;
 - timestamps receive activity using `QueryPerformanceCounter` on Windows;
 - stores every raw JSON snapshot unchanged;
-- records an append-only timeline;
-- acknowledges GSI without doing gameplay interpretation or audio work;
+- records an append-only timeline with accept/body/ACK/persist timing;
+- acknowledges GSI **before disk I/O** and without gameplay interpretation or audio work;
 - replays the captured snapshot timing later without CS2 running.
 
 ### Build on Windows

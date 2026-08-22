@@ -15,6 +15,8 @@ struct SnapshotRecord {
     std::uint64_t sequence{};
     std::uint64_t accepted_tick{};
     std::uint64_t body_complete_tick{};
+    std::uint64_t ack_sent_tick{};
+    std::uint64_t persist_complete_tick{};
     std::uint64_t relative_us{};
     std::size_t body_bytes{};
     std::string body_filename;
@@ -29,6 +31,7 @@ public:
 
     SnapshotRecord append(std::uint64_t accepted_tick,
                           std::uint64_t body_complete_tick,
+                          std::uint64_t ack_sent_tick,
                           const std::string& body);
 
 private:
