@@ -171,9 +171,8 @@ std::optional<HttpRequest> receive_request(socket_t client) {
 
 GsiHttpServer::GsiHttpServer(std::uint16_t port,
                              const MonotonicClock& clock,
-                             SessionRecorder& recorder,
-                             LiveEventPipeline& live_events)
-    : port_(port), clock_(clock), recorder_(recorder), live_events_(live_events) {}
+                             TelemetryIngress& ingress)
+    : port_(port), clock_(clock), ingress_(ingress) {}
 
 void GsiHttpServer::request_stop() {
     stop_requested_.store(true);
@@ -209,7 +208,7 @@ int GsiHttpServer::run() {
     }
 
     std::cout << "[PROMATOR] GSI probe listening on http://127.0.0.1:" << port_ << "/\n";
-    std::cout << "[PROMATOR] Session: " << recorder_.directory().string() << "\n";
+    std::cout << "[PROMATOR] Session: " << ingress_.session_directory().string() << "\n";
     std::cout << "[PROMATOR] Live event pipeline enabled.\n";
     std::cout << "[PROMATOR] Press Ctrl+C to stop.\n";
 
@@ -280,16 +279,16 @@ int GsiHttpServer::run() {
         const auto ack_sent_tick = clock_.now();
         close_socket(client);
 
-        // Fan the immutable payload into independent queues. The only extra
-        // network-thread work is a small string copy plus two queue pushes.
-        std::string live_body = request->body;
-        const auto record = recorder_.enqueue(
+        // After ACK, one tiny serialization gate assigns/records the canonical
+        // cross-source order and fans the observation to persistence + live
+        // semantics in that same order. No parsing or filesystem I/O occurs here.
+        const auto record = ingress_.enqueue_gsi(
             accepted_tick, body_complete_tick, ack_sent_tick, std::move(request->body));
-        live_events_.enqueue(record.sequence, record.relative_us, std::move(live_body));
 
         const double ingress_ms = clock_.seconds_between(accepted_tick, body_complete_tick) * 1000.0;
         const double ack_ms = clock_.seconds_between(accepted_tick, ack_sent_tick) * 1000.0;
         std::cout << "[GSI] #" << record.sequence
+                  << " order=" << record.ingress_order
                   << " t+" << (record.relative_us / 1000.0) << " ms"
                   << " bytes=" << record.body_bytes
                   << " ingress=" << ingress_ms << " ms"
