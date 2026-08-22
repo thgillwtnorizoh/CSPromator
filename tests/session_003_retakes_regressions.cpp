@@ -9,6 +9,7 @@
 
 namespace {
 
+using cspromator::EventEvidence;
 using cspromator::EventType;
 using cspromator::PromatorEvent;
 
@@ -20,6 +21,13 @@ bool has(const std::vector<PromatorEvent>& events, EventType type) {
     return std::any_of(events.begin(), events.end(), [type](const auto& event) {
         return event.type == type;
     });
+}
+
+const PromatorEvent* find(const std::vector<PromatorEvent>& events, EventType type) {
+    const auto it = std::find_if(events.begin(), events.end(), [type](const auto& event) {
+        return event.type == type;
+    });
+    return it == events.end() ? nullptr : &(*it);
 }
 
 void require(bool condition, const char* message) {
@@ -88,7 +96,7 @@ void test_smoke_burning_rising_edges() {
     require(!has(decay, EventType::PlayerBurning), "positive burning decay must not spam PLAYER_BURNING");
 }
 
-void test_retakes_triple_kill_is_not_assumed_ace() {
+void test_retakes_ct_triple_kill_is_candidate_not_confirmed_ace() {
     cspromator::EventDetector detector;
 
     detector.process(state(R"({
@@ -105,24 +113,48 @@ void test_retakes_triple_kill_is_not_assumed_ace() {
       "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":3,"round_killhs":3},"match_stats":{"kills":6,"assists":0,"deaths":0,"mvps":2}}
     })", 21));
     require(has(third, EventType::PlayerKill), "third retakes kill should remain a normal kill event");
-    require(!has(third, EventType::Ace), "three retakes kills are not enough evidence to assert ACE");
+    require(has(third, EventType::AceCandidate), "CT three-kill retakes threshold should emit ACE_CANDIDATE");
+    require(!has(third, EventType::Ace), "retakes roster churn prevents GSI-only confirmed ACE");
+    const auto* candidate = find(third, EventType::AceCandidate);
+    require(candidate && candidate->evidence == EventEvidence::ModeAssumption,
+            "retakes ACE_CANDIDATE should disclose mode-assumption evidence");
 }
 
-void test_post_round_kill_does_not_end_round_twice() {
+void test_retakes_t_four_kill_candidate() {
     cspromator::EventDetector detector;
 
     detector.process(state(R"({
       "provider":{"steamid":"LOCAL"},
       "map":{"name":"de_test","mode":"retakes","phase":"live","round":4},
       "round":{"phase":"live","bomb":"planted"},
-      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":1,"round_killhs":1},"match_stats":{"kills":7,"assists":0,"deaths":0,"mvps":2}}
+      "player":{"steamid":"LOCAL","team":"T","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":3,"round_killhs":1},"match_stats":{"kills":9,"assists":0,"deaths":0,"mvps":2}}
+    })", 25));
+
+    const auto fourth = detector.process(state(R"({
+      "provider":{"steamid":"LOCAL"},
+      "map":{"name":"de_test","mode":"retakes","phase":"live","round":4},
+      "round":{"phase":"live","bomb":"planted"},
+      "player":{"steamid":"LOCAL","team":"T","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":4,"round_killhs":1},"match_stats":{"kills":10,"assists":0,"deaths":0,"mvps":2}}
+    })", 26));
+    require(has(fourth, EventType::AceCandidate), "T four-kill retakes threshold should emit ACE_CANDIDATE");
+    require(!has(fourth, EventType::Ace), "T threshold still cannot prove the live roster from GSI alone");
+}
+
+void test_post_round_kill_does_not_end_round_or_create_ace_candidate() {
+    cspromator::EventDetector detector;
+
+    detector.process(state(R"({
+      "provider":{"steamid":"LOCAL"},
+      "map":{"name":"de_test","mode":"retakes","phase":"live","round":4},
+      "round":{"phase":"live","bomb":"planted"},
+      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":2,"round_killhs":1},"match_stats":{"kills":7,"assists":0,"deaths":0,"mvps":2}}
     })", 30));
 
     const auto ended = detector.process(state(R"({
       "provider":{"steamid":"LOCAL"},
       "map":{"name":"de_test","mode":"retakes","phase":"live","round":5},
       "round":{"phase":"over","bomb":"defused","win_team":"CT"},
-      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":1,"round_killhs":1},"match_stats":{"kills":7,"assists":0,"deaths":0,"mvps":3}}
+      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":2,"round_killhs":1},"match_stats":{"kills":7,"assists":0,"deaths":0,"mvps":3}}
     })", 31));
     require(has(ended, EventType::RoundEnded), "winner packet should end round once");
 
@@ -130,10 +162,11 @@ void test_post_round_kill_does_not_end_round_twice() {
       "provider":{"steamid":"LOCAL"},
       "map":{"name":"de_test","mode":"retakes","phase":"live","round":5},
       "round":{"phase":"over","bomb":"defused","win_team":"CT"},
-      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":2,"round_killhs":2},"match_stats":{"kills":8,"assists":0,"deaths":0,"mvps":3}}
+      "player":{"steamid":"LOCAL","team":"CT","state":{"health":100,"flashed":0,"smoked":0,"burning":0,"round_kills":3,"round_killhs":2},"match_stats":{"kills":8,"assists":0,"deaths":0,"mvps":3}}
     })", 32));
     require(has(late_kill, EventType::PlayerKill), "post-round kill telemetry should remain observable");
     require(!has(late_kill, EventType::RoundEnded), "post-round kill must not duplicate ROUND_ENDED");
+    require(!has(late_kill, EventType::AceCandidate), "post-round threshold crossing must not fabricate ACE_CANDIDATE");
 }
 
 } // namespace
@@ -141,8 +174,9 @@ void test_post_round_kill_does_not_end_round_twice() {
 int main() {
     test_retakes_bomb_defuse_lifecycle();
     test_smoke_burning_rising_edges();
-    test_retakes_triple_kill_is_not_assumed_ace();
-    test_post_round_kill_does_not_end_round_twice();
+    test_retakes_ct_triple_kill_is_candidate_not_confirmed_ace();
+    test_retakes_t_four_kill_candidate();
+    test_post_round_kill_does_not_end_round_or_create_ace_candidate();
     std::cout << "CSPromator Session 003 Retakes regressions passed.\n";
     return 0;
 }

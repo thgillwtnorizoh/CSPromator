@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CSPromator VERSION 0.0.4 LANGUAGES CXX)
+project(CSPromator VERSION 0.0.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,6 +50,10 @@ add_test(NAME session-002-regressions COMMAND cspromator-session002-tests)
 add_executable(cspromator-session003-tests tests/session_003_retakes_regressions.cpp)
 target_link_libraries(cspromator-session003-tests PRIVATE cspromator-core)
 add_test(NAME session-003-retakes COMMAND cspromator-session003-tests)
+
+add_executable(cspromator-session004-tests tests/session_004_casual_regressions.cpp)
+target_link_libraries(cspromator-session004-tests PRIVATE cspromator-core)
+add_test(NAME session-004-casual COMMAND cspromator-session004-tests)
 
 add_executable(cspromator-live-pipeline-tests tests/live_event_pipeline_tests.cpp)
 target_link_libraries(cspromator-live-pipeline-tests PRIVATE cspromator-core)
