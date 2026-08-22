@@ -24,6 +24,14 @@ std::string_view to_string(SupplementarySourceKind source) {
     return "unknown";
 }
 
+std::optional<SupplementarySourceKind> supplementary_source_from_string(std::string_view value) {
+    if (value == "unknown") return SupplementarySourceKind::Unknown;
+    if (value == "synthetic") return SupplementarySourceKind::Synthetic;
+    if (value == "replay") return SupplementarySourceKind::Replay;
+    if (value == "panorama-visible-state") return SupplementarySourceKind::PanoramaVisibleState;
+    return std::nullopt;
+}
+
 bool valid_team_counts(const TeamCounts& counts) {
     return valid_nonnegative(counts.ct_alive) &&
            valid_nonnegative(counts.t_alive) &&
