@@ -53,6 +53,9 @@ std::string_view to_string(EventType type) {
         case EventType::PlayerBurning: return "PLAYER_BURNING";
         case EventType::AceCandidate: return "ACE_CANDIDATE";
         case EventType::Ace: return "ACE";
+        case EventType::ClutchStarted: return "CLUTCH_STARTED";
+        case EventType::ClutchUpdated: return "CLUTCH_UPDATED";
+        case EventType::ClutchEnded: return "CLUTCH_ENDED";
         case EventType::MvpGained: return "MVP_GAINED";
         case EventType::BombPlanted: return "BOMB_PLANTED";
         case EventType::BombDefused: return "BOMB_DEFUSED";
@@ -74,6 +77,21 @@ std::string_view to_string(EventEvidence evidence) {
     return "unknown";
 }
 
+std::string describe_sources(EventSource sources) {
+    std::string result;
+    const auto append = [&](std::string_view name) {
+        if (!result.empty()) {
+            result += '+';
+        }
+        result += name;
+    };
+    if (has_source(sources, EventSource::Gsi)) append("gsi");
+    if (has_source(sources, EventSource::ModeRules)) append("mode-rules");
+    if (has_source(sources, EventSource::SupplementaryState)) append("supplementary");
+    if (result.empty()) result = "none";
+    return result;
+}
+
 std::string describe_event(const PromatorEvent& event) {
     std::ostringstream out;
     out << to_string(event.type);
@@ -88,6 +106,9 @@ std::string describe_event(const PromatorEvent& event) {
     }
     if (event.evidence != EventEvidence::Deterministic) {
         out << " evidence=" << to_string(event.evidence);
+    }
+    if (event.sources != EventSource::Gsi) {
+        out << " sources=" << describe_sources(event.sources);
     }
     return out.str();
 }
@@ -214,6 +235,7 @@ std::vector<PromatorEvent> EventDetector::process(const NormalizedGameState& cur
                 *previous.round_kills < *threshold && *current.round_kills >= *threshold) {
                 auto candidate = make_event(EventType::AceCandidate, current);
                 candidate.evidence = EventEvidence::ModeAssumption;
+                candidate.sources = EventSource::Gsi | EventSource::ModeRules;
                 candidate.value = *current.round_kills;
                 events.push_back(std::move(candidate));
             }
