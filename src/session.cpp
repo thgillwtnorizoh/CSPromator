@@ -80,7 +80,7 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
     meta << "{\n"
          << "  \"schema_version\": 2,\n"
          << "  \"application\": \"CSPromator Probe\",\n"
-         << "  \"application_version\": \"0.0.2\",\n"
+         << "  \"application_version\": \"0.0.3\",\n"
          << "  \"storage\": \"packed-raw-v1\",\n"
          << "  \"clock\": {\"name\": \"" << json_escape(info.name)
          << "\", \"frequency\": " << info.frequency << "},\n"

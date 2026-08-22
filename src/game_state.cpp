@@ -394,6 +394,8 @@ NormalizedGameState normalize_gsi(std::string_view json_body,
         state.armor = read_int(*root, {"player", "state", "armor"});
         state.money = read_int(*root, {"player", "state", "money"});
         state.equipment_value = read_int(*root, {"player", "state", "equip_value"});
+        state.flashed = read_int(*root, {"player", "state", "flashed"});
+        state.smoked = read_int(*root, {"player", "state", "smoked"});
         state.round_kills = read_int(*root, {"player", "state", "round_kills"});
         state.round_headshot_kills = read_int(*root, {"player", "state", "round_killhs"});
         state.kills = read_int(*root, {"player", "match_stats", "kills"});

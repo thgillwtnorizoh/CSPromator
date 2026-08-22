@@ -2,6 +2,7 @@
 #include "cspromator/event_detector.hpp"
 #include "cspromator/game_state.hpp"
 #include "cspromator/http_server.hpp"
+#include "cspromator/live_event_pipeline.hpp"
 #include "cspromator/session.hpp"
 
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -26,7 +28,7 @@ void handle_signal(int) {
 
 void print_usage() {
     std::cout
-        << "CSPromator Probe 0.0.2\n\n"
+        << "CSPromator Probe 0.0.3\n\n"
         << "Usage:\n"
         << "  cspromator-probe record [port] [sessions-dir]\n"
         << "  cspromator-probe replay <session-dir> [speed] [dump]\n"
@@ -63,7 +65,18 @@ int command_record(int argc, char** argv) {
 
     cspromator::MonotonicClock clock;
     cspromator::SessionRecorder recorder(sessions, clock);
-    cspromator::GsiHttpServer server(port, clock, recorder);
+    cspromator::LiveEventPipeline live_events(
+        [](const cspromator::NormalizedGameState& state,
+           const std::vector<cspromator::PromatorEvent>& events) {
+            std::ostringstream out;
+            out << "[LIVE] #" << state.sequence
+                << " t+" << (state.relative_us / 1000.0) << " ms\n";
+            for (const auto& event : events) {
+                out << "  " << cspromator::describe_event(event) << "\n";
+            }
+            std::cout << out.str() << std::flush;
+        });
+    cspromator::GsiHttpServer server(port, clock, recorder, live_events);
 
     g_active_server = &server;
     const auto old_sigint = std::signal(SIGINT, handle_signal);
@@ -77,8 +90,9 @@ int command_record(int argc, char** argv) {
     std::signal(SIGTERM, old_sigterm);
 #endif
 
+    live_events.stop_and_flush();
     recorder.stop_and_flush();
-    std::cout << "[PROMATOR] Session flushed.\n";
+    std::cout << "[PROMATOR] Live events and session flushed.\n";
     return result;
 }
 
