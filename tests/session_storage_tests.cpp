@@ -49,10 +49,21 @@ void test_v3_combined_roundtrip() {
         const auto b = clock.now();
         const auto second = recorder.enqueue(b, b, b, R"({"n":2,"text":"tomato"})");
 
+        // Simulate a provider observation that was captured earlier but submitted
+        // after newer GSI. Replay must preserve accepted ingress order rather than
+        // moving this delayed observation backward by timestamp.
+        auto delayed = supplement;
+        delayed.observed_tick = a;
+        delayed.roster_revision = 10;
+        delayed.teams.ct_alive = 2;
+        const auto delayed_record = recorder.enqueue_supplementary(delayed);
+
         require(first.ingress_order < supplementary.ingress_order,
                 "supplement should follow first GSI in shared ingress order");
         require(supplementary.ingress_order < second.ingress_order,
                 "second GSI should follow supplement in shared ingress order");
+        require(second.ingress_order < delayed_record.ingress_order,
+                "delayed supplement should retain later accepted ingress order");
         recorder.stop_and_flush();
     }
 
@@ -63,7 +74,7 @@ void test_v3_combined_roundtrip() {
     require(cspromator::load_replay_body(entries[1]) == R"({"n":2,"text":"tomato"})", "second packed body should round-trip exactly");
 
     const auto supplements = cspromator::load_supplementary_timeline(session);
-    require(supplements.size() == 1, "v3 supplementary timeline should contain one record");
+    require(supplements.size() == 2, "v3 supplementary timeline should contain both records");
     require(supplements[0].recorded_source == cspromator::SupplementarySourceKind::Synthetic,
             "replay entry should preserve recorded provider source");
     require(supplements[0].record.snapshot.source == cspromator::SupplementarySourceKind::Replay,
@@ -76,13 +87,19 @@ void test_v3_combined_roundtrip() {
             "CT alive count should round-trip");
 
     const auto stream = cspromator::load_replay_stream(session);
-    require(stream.size() == 3, "merged v3 replay stream should contain both sources");
+    require(stream.size() == 4, "merged v3 replay stream should contain both sources");
     require(stream[0].kind == cspromator::ReplayItemKind::Gsi,
             "first merged replay item should be GSI");
     require(stream[1].kind == cspromator::ReplayItemKind::Supplementary,
             "second merged replay item should be supplementary");
     require(stream[2].kind == cspromator::ReplayItemKind::Gsi,
-            "third merged replay item should be GSI");
+            "third merged replay item should be second GSI");
+    require(stream[3].kind == cspromator::ReplayItemKind::Supplementary,
+            "delayed older-timestamp supplement must remain fourth by ingress order");
+    require(stream[3].ingress_order > stream[2].ingress_order,
+            "canonical replay ordering should follow accepted ingress order");
+    require(stream[3].relative_us <= stream[2].relative_us,
+            "test fixture should contain an actually older delayed observation timestamp");
 
     const auto metadata = cspromator::load_text_file(session / "metadata.json");
     require(metadata.find("\"schema_version\": 3") != std::string::npos,
