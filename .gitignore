@@ -1,0 +1,10 @@
+/build/
+/out/
+/.vs/
+/.vscode/
+CMakeUserPresets.json
+sessions/*
+!sessions/.gitkeep
+*.user
+*.suo
+*.VC.db
