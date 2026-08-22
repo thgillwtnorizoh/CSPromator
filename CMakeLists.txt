@@ -69,4 +69,8 @@ add_executable(cspromator-live-supplement-tests tests/live_supplementary_pipelin
 target_link_libraries(cspromator-live-supplement-tests PRIVATE cspromator-core)
 add_test(NAME live-supplementary-pipeline COMMAND cspromator-live-supplement-tests)
 
+add_executable(cspromator-stale-supplement-tests tests/stale_supplement_regression_tests.cpp)
+target_link_libraries(cspromator-stale-supplement-tests PRIVATE cspromator-core)
+add_test(NAME stale-supplement-regression COMMAND cspromator-stale-supplement-tests)
+
 install(TARGETS cspromator-probe RUNTIME DESTINATION bin)
