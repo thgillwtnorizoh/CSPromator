@@ -2,11 +2,11 @@
 
 **Promator** is an experimental adaptive-audio director for Counter-Strike 2.
 
-The project is deliberately building the telemetry spine before the audio machinery. Prototype **0.0.4** records current CS2 Game State Integration traffic, interprets it live, and now carries the same generic event model across both normal competitive play and Retakes.
+The project is deliberately building the telemetry spine before the audio machinery. Prototype **0.0.5** records current CS2 Game State Integration traffic, interprets it live, and now distinguishes factual telemetry from higher-level claims that GSI cannot fully prove.
 
 No audio engine is included yet. That is intentional.
 
-## Prototype 0.0.4
+## Prototype 0.0.5
 
 The probe now:
 
@@ -16,19 +16,23 @@ The probe now:
 - fans each payload into independent persistence and live-interpretation worker queues;
 - stores raw payload bytes in one packed `raw.gsi` stream;
 - replays both 0.0.1 per-file sessions and modern packed sessions;
-- normalizes local-player state only when `player.steamid == provider.steamid`;
-- keeps local-player identity loss sticky across spectated-player and missing-player gaps;
-- derives round/freeze transitions, win/loss, damage/death/respawn, kills/headshots, assists, flash/smoke/burning rising edges, ace, MVP, bomb plant/defuse, halftime, team swap and game over;
-- keeps Retakes as mode context (`map.mode=retakes`) instead of forking the telemetry engine into Retakes-only events;
+- accepts local-player numeric state only when `player.steamid == provider.steamid`;
+- distinguishes first `LOCAL_PLAYER_ACQUIRED` from later `LOCAL_PLAYER_LOST` / `LOCAL_PLAYER_RESTORED` spectator cycles;
+- derives round/freeze transitions, win/loss, damage/death/respawn, kills/headshots, assists, flash/smoke/burning rising edges, MVP, bomb plant/defuse/explosion, halftime, team swap and game over;
+- carries an event-evidence field so non-deterministic semantics can disclose their basis;
+- emits `ACE_CANDIDATE evidence=mode-assumption` for supported fixed-mode thresholds instead of asserting a GSI-only `ACE`;
+- emits no Casual ace candidate from kill count alone because Casual roster membership can change during a round;
+- keeps Retakes and Casual as mode context instead of forking the telemetry engine into mode-specific pipelines;
 - prints derived event batches live during `record`;
 - exposes `analyze` to run the exact same event detector over old sessions;
-- includes anonymized regressions from three real test sessions.
+- includes anonymized regressions from four real test sessions.
 
 See:
 
 - [`docs/SESSION_001_FINDINGS.md`](docs/SESSION_001_FINDINGS.md)
 - [`docs/SESSION_002_FINDINGS.md`](docs/SESSION_002_FINDINGS.md)
 - [`docs/SESSION_003_FINDINGS.md`](docs/SESSION_003_FINDINGS.md)
+- [`docs/SESSION_004_FINDINGS.md`](docs/SESSION_004_FINDINGS.md)
 
 ## Get the Windows build without a local toolchain
 
@@ -36,7 +40,7 @@ GitHub Actions is the default build path. Every push to `main` builds Windows x6
 
 1. Open **Actions**.
 2. Open the latest successful **Windows Build**.
-3. Download `CSPromator-0.0.4-windows-x64`.
+3. Download `CSPromator-0.0.5-windows-x64`.
 4. Extract the artifact and run the probe directly.
 
 No Visual Studio or CMake installation is required on the target machine.
@@ -82,21 +86,28 @@ Example:
 ```text
 [GSI] #42 t+37120.4 ms bytes=2190 ingress=31.8 ms ack=31.9 ms queued
 [LIVE] #42 t+37120.4 ms
-  PLAYER_KILL amount=1 value=2
-  PLAYER_HEADSHOT_KILL amount=1 value=1
+  PLAYER_KILL amount=1 value=5
+  ACE_CANDIDATE value=5 evidence=mode-assumption
 ```
 
-A Retakes round may instead produce a lifecycle such as:
+`ACE_CANDIDATE` is deliberately not the same event as `ACE`. The candidate says that a supported mode rule was satisfied; confirmed `ACE` is reserved for future roster evidence strong enough to prove the local player eliminated the relevant opposing participants.
+
+A bomb lifecycle can produce explicit and generic events together:
 
 ```text
-ROUND_STARTED
 BOMB_PLANTED
-PLAYER_SMOKED
-PLAYER_BURNING
+...
 BOMB_DEFUSED
 BOMB_STATE_CLEARED
-ROUND_ENDED
-ROUND_WON
+```
+
+or:
+
+```text
+BOMB_PLANTED
+...
+BOMB_EXPLODED
+BOMB_STATE_CLEARED
 ```
 
 Multiple events from the same GSI payload remain one batch.
@@ -136,11 +147,23 @@ CSPromator does not assume top-level `player` always means the local user. Local
 player.steamid == provider.steamid
 ```
 
-The remembered local team survives spectating so `ROUND_WON` / `ROUND_LOST` cannot accidentally use the team of the bot currently being observed.
+Joining a match in progress can expose spectated players before the local player's own state appears. Therefore observation of somebody else is not called `LOCAL_PLAYER_LOST` until local state has actually been acquired once.
 
-Retakes does **not** redefine three kills as an ace. Active-player GSI does not provide enough opponent-roster information to prove that assumption reliably.
+The remembered local team survives spectating so `ROUND_WON` / `ROUND_LOST` cannot accidentally use the team of the player currently being observed.
 
-Movement and spectator-only world state are not fabricated when active-player GSI does not provide them.
+### ACE policy in 0.0.5
+
+```text
+Competitive: 5 kills -> ACE_CANDIDATE (mode assumption)
+Retakes CT:   3 kills -> ACE_CANDIDATE (mode assumption)
+Retakes T:    4 kills -> ACE_CANDIDATE (mode assumption)
+Casual:       no kill-count-only ace candidate
+Other modes:  unknown until tested
+```
+
+A candidate is only produced for a kill belonging to the live round. Late post-round kills remain `PLAYER_KILL` but cannot manufacture an ace candidate.
+
+Movement, live roster size, alive counts and spectator-only world state are not fabricated when active-player GSI does not provide them.
 
 ## Road ahead
 
@@ -149,7 +172,9 @@ CS2 GSI
   -> raw recorder                    [working]
   -> state normaliser                [working first pass]
   -> transition / derived events     [working first pass]
+  -> evidence-aware semantics        [working first pass]
   -> live event pipeline             [working]
+  -> supplementary-state research    [next: Panorama capability discussion]
   -> director rule engine
   -> precise audio scheduler
   -> adaptive soundtrack engine
