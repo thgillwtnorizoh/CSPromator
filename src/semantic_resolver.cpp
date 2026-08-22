@@ -73,12 +73,18 @@ void SemanticResolver::begin_round(const NormalizedGameState& state) {
     context_.clutch_opponents.reset();
 
     // A freeze/pre-start snapshot may establish the roster baseline. Its alive
-    // counts are never trusted for current-round ACE/clutch decisions until a
+    // counts are not exposed as current-round semantic context until a new
     // supplementary observation arrives at or after ROUND_STARTED.
     if (latest_supplement_ && snapshot_fresh_at(*latest_supplement_, state.relative_us)) {
         establish_round_baseline(*latest_supplement_);
-        update_context(*latest_supplement_);
     }
+
+    context_.supplement_available = false;
+    context_.local_alive.reset();
+    context_.enemy_alive.reset();
+    context_.local_total.reset();
+    context_.enemy_total.reset();
+    context_.alive_delta.reset();
 }
 
 void SemanticResolver::establish_round_baseline(
@@ -308,7 +314,12 @@ std::vector<PromatorEvent> SemanticResolver::process_gsi(
         begin_round(state);
     }
 
-    if (latest_supplement_ && snapshot_fresh_at(*latest_supplement_, state.relative_us)) {
+    const bool has_current_round_supplement =
+        latest_supplement_ &&
+        snapshot_fresh_at(*latest_supplement_, state.relative_us) &&
+        (!round_has_known_start_ || latest_supplement_->relative_us >= round_start_us_);
+
+    if (has_current_round_supplement) {
         update_context(*latest_supplement_);
         observe_roster(*latest_supplement_);
 
@@ -319,6 +330,11 @@ std::vector<PromatorEvent> SemanticResolver::process_gsi(
         events.insert(events.end(), ace.begin(), ace.end());
     } else {
         context_.supplement_available = false;
+        context_.local_alive.reset();
+        context_.enemy_alive.reset();
+        context_.local_total.reset();
+        context_.enemy_total.reset();
+        context_.alive_delta.reset();
     }
 
     if (has_event(factual_events, EventType::RoundEnded) ||
