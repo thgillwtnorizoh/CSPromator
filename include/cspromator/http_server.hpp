@@ -1,8 +1,7 @@
 #pragma once
 
 #include "cspromator/clock.hpp"
-#include "cspromator/live_event_pipeline.hpp"
-#include "cspromator/session.hpp"
+#include "cspromator/telemetry_ingress.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -13,8 +12,7 @@ class GsiHttpServer {
 public:
     GsiHttpServer(std::uint16_t port,
                   const MonotonicClock& clock,
-                  SessionRecorder& recorder,
-                  LiveEventPipeline& live_events);
+                  TelemetryIngress& ingress);
 
     int run();
     void request_stop();
@@ -22,8 +20,7 @@ public:
 private:
     std::uint16_t port_;
     const MonotonicClock& clock_;
-    SessionRecorder& recorder_;
-    LiveEventPipeline& live_events_;
+    TelemetryIngress& ingress_;
     std::atomic_bool stop_requested_{false};
 };
 
