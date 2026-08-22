@@ -47,7 +47,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: CSPromator-0.0.3-windows-x64
+          name: CSPromator-0.0.4-windows-x64
           path: package/
           if-no-files-found: error
           retention-days: 14
