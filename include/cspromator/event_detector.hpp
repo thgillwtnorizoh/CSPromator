@@ -20,6 +20,7 @@ enum class EventType {
     RoundWon,
     RoundLost,
     TeamChanged,
+    LocalPlayerAcquired,
     LocalPlayerLost,
     LocalPlayerRestored,
     PlayerRespawned,
@@ -31,18 +32,27 @@ enum class EventType {
     PlayerFlashed,
     PlayerSmoked,
     PlayerBurning,
+    AceCandidate,
     Ace,
     MvpGained,
     BombPlanted,
     BombDefused,
+    BombExploded,
     BombStateCleared,
     HalftimeStarted,
     HalftimeEnded,
     GameOver,
 };
 
+enum class EventEvidence {
+    Deterministic,
+    ModeAssumption,
+    Heuristic,
+};
+
 struct PromatorEvent {
     EventType type{};
+    EventEvidence evidence{EventEvidence::Deterministic};
     std::uint64_t sequence{};
     std::uint64_t relative_us{};
     std::optional<int> amount;
@@ -52,6 +62,7 @@ struct PromatorEvent {
 };
 
 std::string_view to_string(EventType type);
+std::string_view to_string(EventEvidence evidence);
 std::string describe_event(const PromatorEvent& event);
 
 class EventDetector {
@@ -70,6 +81,7 @@ private:
     std::optional<int> last_known_local_mvps_;
     std::optional<int> last_known_local_assists_;
     std::optional<std::string> last_known_local_team_;
+    bool local_player_ever_acquired_{false};
     bool local_observation_lost_{false};
 };
 
