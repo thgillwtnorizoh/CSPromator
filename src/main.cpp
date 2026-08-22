@@ -136,15 +136,19 @@ int command_replay(int argc, char** argv) {
               << " supplementary=" << supplementary_count
               << " speed=" << speed << "x\n";
 
-    std::uint64_t previous_us = stream.front().relative_us;
+    std::uint64_t replay_clock_us = stream.front().relative_us;
     for (std::size_t i = 0; i < stream.size(); ++i) {
         const auto& item = stream[i];
         if (i > 0) {
-            const auto delta_us = item.relative_us - previous_us;
+            const auto delta_us = item.relative_us > replay_clock_us
+                ? item.relative_us - replay_clock_us
+                : 0;
             const auto scaled = static_cast<std::uint64_t>(static_cast<double>(delta_us) / speed);
             std::this_thread::sleep_for(std::chrono::microseconds(scaled));
+            if (item.relative_us > replay_clock_us) {
+                replay_clock_us = item.relative_us;
+            }
         }
-        previous_us = item.relative_us;
 
         if (item.kind == cspromator::ReplayItemKind::Gsi) {
             const auto& entry = *item.gsi;
@@ -252,18 +256,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         const std::string command = argv[1];
-        if (command == "record") {
-            return command_record(argc, argv);
-        }
-        if (command == "replay") {
-            return command_replay(argc, argv);
-        }
-        if (command == "analyze") {
-            return command_analyze(argc, argv);
-        }
-        if (command == "clock") {
-            return command_clock();
-        }
+        if (command == "record") return command_record(argc, argv);
+        if (command == "replay") return command_replay(argc, argv);
+        if (command == "analyze") return command_analyze(argc, argv);
+        if (command == "clock") return command_clock();
         print_usage();
         return 1;
     } catch (const std::exception& ex) {
