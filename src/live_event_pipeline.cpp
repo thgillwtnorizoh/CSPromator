@@ -25,7 +25,27 @@ void LiveEventPipeline::enqueue(std::uint64_t sequence,
     if (worker_error_) {
         std::rethrow_exception(worker_error_);
     }
-    queue_.push(PendingPayload{sequence, relative_us, std::move(body)});
+
+    PendingItem item;
+    item.kind = PendingItem::Kind::Gsi;
+    item.gsi = PendingPayload{sequence, relative_us, std::move(body)};
+    queue_.push(std::move(item));
+    queue_cv_.notify_one();
+}
+
+void LiveEventPipeline::enqueue_supplementary(SupplementarySnapshot snapshot) {
+    std::lock_guard lock(queue_mutex_);
+    if (stopping_ || stopped_) {
+        throw std::runtime_error("Live event pipeline is stopping");
+    }
+    if (worker_error_) {
+        std::rethrow_exception(worker_error_);
+    }
+
+    PendingItem item;
+    item.kind = PendingItem::Kind::Supplementary;
+    item.supplementary = std::move(snapshot);
+    queue_.push(std::move(item));
     queue_cv_.notify_one();
 }
 
@@ -53,7 +73,7 @@ void LiveEventPipeline::stop_and_flush() {
 void LiveEventPipeline::worker_loop() {
     try {
         for (;;) {
-            PendingPayload pending;
+            PendingItem pending;
             {
                 std::unique_lock lock(queue_mutex_);
                 queue_cv_.wait(lock, [this] {
@@ -69,11 +89,27 @@ void LiveEventPipeline::worker_loop() {
                 queue_.pop();
             }
 
-            auto state = normalize_gsi(pending.body, pending.sequence, pending.relative_us);
+            if (pending.kind == PendingItem::Kind::Supplementary) {
+                auto semantic_events = resolver_.process_supplementary(pending.supplementary);
+                if (!semantic_events.empty() && handler_ && latest_state_) {
+                    handler_(*latest_state_, semantic_events);
+                }
+                continue;
+            }
+
+            auto state = normalize_gsi(
+                pending.gsi.body,
+                pending.gsi.sequence,
+                pending.gsi.relative_us);
             if (!state.payload_valid) {
                 continue;
             }
+
             auto events = detector_.process(state);
+            latest_state_ = state;
+            auto semantic_events = resolver_.process_gsi(state, events);
+            events.insert(events.end(), semantic_events.begin(), semantic_events.end());
+
             if (!events.empty() && handler_) {
                 handler_(state, events);
             }
