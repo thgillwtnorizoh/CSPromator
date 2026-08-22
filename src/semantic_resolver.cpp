@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
 namespace cspromator {
 namespace {
@@ -71,6 +72,9 @@ void SemanticResolver::begin_round(const NormalizedGameState& state) {
     context_.clutch_active = false;
     context_.clutch_opponents.reset();
 
+    // A freeze/pre-start snapshot may establish the roster baseline. Its alive
+    // counts are never trusted for current-round ACE/clutch decisions until a
+    // supplementary observation arrives at or after ROUND_STARTED.
     if (latest_supplement_ && snapshot_fresh_at(*latest_supplement_, state.relative_us)) {
         establish_round_baseline(*latest_supplement_);
         update_context(*latest_supplement_);
@@ -182,6 +186,12 @@ std::vector<PromatorEvent> SemanticResolver::evaluate_clutch(
         return events;
     }
 
+    // Pre-round/freeze snapshots may establish totals, but their alive counts
+    // cannot describe the current live round.
+    if (!round_has_known_start_ || latest_supplement_->relative_us < round_start_us_) {
+        return events;
+    }
+
     const auto perspective = perspective_for_team(latest_supplement_->teams, *local_team_);
     if (!perspective || !perspective->local_alive || !perspective->enemy_alive) {
         if (auto ended = end_clutch(event_us)) {
@@ -232,6 +242,12 @@ std::vector<PromatorEvent> SemanticResolver::evaluate_ace(
     if (ace_emitted_this_round_ || !round_has_known_start_ ||
         !latest_state_ || !latest_supplement_ || !local_team_ ||
         !initial_enemy_total_ || !supported_round_mode_for_ace(latest_state_->map_mode)) {
+        return events;
+    }
+
+    // Confirmation requires current-round alive evidence. A previous-round zero
+    // may never promote a current-round candidate.
+    if (latest_supplement_->relative_us < round_start_us_) {
         return events;
     }
     if (roster_changed_this_round_) {
