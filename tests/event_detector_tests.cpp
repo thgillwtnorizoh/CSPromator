@@ -9,6 +9,7 @@
 
 namespace {
 
+using cspromator::EventEvidence;
 using cspromator::EventType;
 using cspromator::PromatorEvent;
 
@@ -39,12 +40,13 @@ void require(bool condition, const char* message) {
 void test_death_then_spectator_switch() {
     cspromator::EventDetector detector;
 
-    detector.process(state(R"({
+    const auto first = detector.process(state(R"({
       "provider":{"steamid":"LOCAL"},
       "map":{"name":"de_test","mode":"competitive","phase":"live","round":1},
       "round":{"phase":"live"},
       "player":{"steamid":"LOCAL","team":"T","state":{"health":74,"round_kills":3,"round_killhs":3},"match_stats":{"kills":7,"deaths":0,"mvps":1}}
     })", 1));
+    require(has(first, EventType::LocalPlayerAcquired), "first valid local state should acquire local player");
 
     const auto death = detector.process(state(R"({
       "provider":{"steamid":"LOCAL"},
@@ -77,7 +79,7 @@ void test_death_then_spectator_switch() {
     require(!has(restored, EventType::PlayerKill), "restoring local counters must not look like a kill jump");
 }
 
-void test_ace_round_end_batch() {
+void test_ace_candidate_round_end_batch() {
     cspromator::EventDetector detector;
 
     detector.process(state(R"({
@@ -96,7 +98,8 @@ void test_ace_round_end_batch() {
 
     require(has(events, EventType::PlayerKill), "fifth kill should be detected in round-end packet");
     require(has(events, EventType::PlayerHeadshotKill), "fifth headshot should be detected in round-end packet");
-    require(has(events, EventType::Ace), "5-kill competitive round should emit ACE");
+    require(has(events, EventType::AceCandidate), "5-kill competitive round should emit ACE_CANDIDATE");
+    require(!has(events, EventType::Ace), "GSI-only fixed roster rule must not assert confirmed ACE");
     require(has(events, EventType::MvpGained), "MVP increment should be preserved in same batch");
     require(has(events, EventType::BombStateCleared), "planted bomb disappearing at round end should be represented");
     require(has(events, EventType::RoundEnded), "round end should be detected");
@@ -104,6 +107,9 @@ void test_ace_round_end_batch() {
 
     const auto* kill = find(events, EventType::PlayerKill);
     require(kill && kill->value && *kill->value == 5, "fifth-kill event should retain current round kill count");
+    const auto* ace = find(events, EventType::AceCandidate);
+    require(ace && ace->evidence == EventEvidence::ModeAssumption,
+            "ACE_CANDIDATE must disclose mode-assumption evidence");
 }
 
 void test_halftime_team_swap() {
@@ -146,7 +152,8 @@ void test_final_round_without_over_phase() {
     })", 31));
 
     require(has(events, EventType::PlayerKill), "final fifth kill should be detected");
-    require(has(events, EventType::Ace), "final five-kill round should emit ACE");
+    require(has(events, EventType::AceCandidate), "final five-kill round should emit ACE_CANDIDATE");
+    require(!has(events, EventType::Ace), "final packet cannot prove ACE without roster evidence");
     require(has(events, EventType::RoundEnded), "gameover packet must end round without intermediate over phase");
     require(has(events, EventType::GameOver), "map gameover transition should emit GAME_OVER");
     require(!has(events, EventType::FreezeStarted), "gameover freezetime must not masquerade as next-round freeze");
@@ -156,7 +163,7 @@ void test_final_round_without_over_phase() {
 
 int main() {
     test_death_then_spectator_switch();
-    test_ace_round_end_batch();
+    test_ace_candidate_round_end_batch();
     test_halftime_team_swap();
     test_final_round_without_over_phase();
     std::cout << "CSPromator event regression tests passed.\n";
