@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -170,8 +171,9 @@ std::optional<HttpRequest> receive_request(socket_t client) {
 
 GsiHttpServer::GsiHttpServer(std::uint16_t port,
                              const MonotonicClock& clock,
-                             SessionRecorder& recorder)
-    : port_(port), clock_(clock), recorder_(recorder) {}
+                             SessionRecorder& recorder,
+                             LiveEventPipeline& live_events)
+    : port_(port), clock_(clock), recorder_(recorder), live_events_(live_events) {}
 
 void GsiHttpServer::request_stop() {
     stop_requested_.store(true);
@@ -208,11 +210,12 @@ int GsiHttpServer::run() {
 
     std::cout << "[PROMATOR] GSI probe listening on http://127.0.0.1:" << port_ << "/\n";
     std::cout << "[PROMATOR] Session: " << recorder_.directory().string() << "\n";
+    std::cout << "[PROMATOR] Live event pipeline enabled.\n";
     std::cout << "[PROMATOR] Press Ctrl+C to stop.\n";
 
     while (!stop_requested_.load()) {
         // Poll the listening socket with a short timeout so Ctrl+C can request
-        // a graceful stop and allow the persistence worker to drain.
+        // a graceful stop and allow both worker queues to drain.
         fd_set read_set;
         FD_ZERO(&read_set);
         FD_SET(server, &read_set);
@@ -250,7 +253,7 @@ int GsiHttpServer::run() {
 
         // The earliest timestamp this prototype can honestly claim: local TCP accept.
         const auto accepted_tick = clock_.now();
-        const auto request = receive_request(client);
+        auto request = receive_request(client);
         const auto body_complete_tick = clock_.now();
 
         if (!request) {
@@ -269,17 +272,20 @@ int GsiHttpServer::run() {
             continue;
         }
 
-        // Acknowledge CS2 before any disk I/O or interpretation.
+        // Acknowledge CS2 before persistence, JSON parsing, event detection, or
+        // any director work.
         constexpr std::string_view ok =
             "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         send_all(client, ok);
         const auto ack_sent_tick = clock_.now();
         close_socket(client);
 
-        // Persistence is queued after the GSI request has been released. The
-        // receiver immediately returns to accept(); disk stalls cannot delay the
-        // next receive timestamp.
-        const auto record = recorder_.enqueue(accepted_tick, body_complete_tick, ack_sent_tick, request->body);
+        // Fan the immutable payload into independent queues. The only extra
+        // network-thread work is a small string copy plus two queue pushes.
+        std::string live_body = request->body;
+        const auto record = recorder_.enqueue(
+            accepted_tick, body_complete_tick, ack_sent_tick, std::move(request->body));
+        live_events_.enqueue(record.sequence, record.relative_us, std::move(live_body));
 
         const double ingress_ms = clock_.seconds_between(accepted_tick, body_complete_tick) * 1000.0;
         const double ack_ms = clock_.seconds_between(accepted_tick, ack_sent_tick) * 1000.0;
