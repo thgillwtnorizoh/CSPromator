@@ -1,0 +1,51 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Windows x64 / MSVC
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build -A x64 -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/stage"
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke-test QPC clock
+        run: .\build\Release\cspromator-probe.exe clock
+
+      - name: Install staged files
+        run: cmake --install build --config Release
+
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item stage\bin\cspromator-probe.exe package\
+          Copy-Item config\gamestate_integration_cspromator.cfg package\
+          Copy-Item scripts\install-gsi.ps1 package\
+          Copy-Item README.md package\
+          Copy-Item docs package\docs -Recurse
+          Compress-Archive -Path package\* -DestinationPath CSPromator-0.0.1-windows-x64.zip -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CSPromator-0.0.1-windows-x64
+          path: CSPromator-0.0.1-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
