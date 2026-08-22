@@ -159,13 +159,13 @@ Match leave resets lifecycle, local acquisition memory, ace/clutch state and all
 
 Supplementary observations use the same Promator monotonic-clock domain as GSI.
 
-The resolver rejects supplementary snapshots older than the most recently accepted supplementary timestamp. Cross-source state is not allowed to time-travel.
+The resolver rejects supplementary snapshots older than the most recently accepted supplementary timestamp. It also rejects a supplementary observation whose observation time is older than GSI state already processed by the resolver. Such a delayed observation may remain in the recording for diagnostics, but it cannot rewind current semantic state.
 
 No production freshness timeout is chosen yet. The configuration supports one, but a real provider must be measured before selecting it.
 
 ### Shared ingress order
 
-Schema-v3 sessions assign every queued GSI or supplementary record one monotonically increasing `ingress_order`.
+Schema-v3 sessions assign every queued GSI or supplementary record one monotonically increasing `ingress_order` through a tiny serialized ingress fan-out gate.
 
 ```text
 order 101  GSI
@@ -174,7 +174,9 @@ order 103  supplementary
 order 104  GSI
 ```
 
-`relative_us` remains the time axis. `ingress_order` is the deterministic tie-breaker and preserves the order in which Promator accepted cross-source observations.
+The gate runs after the GSI HTTP acknowledgement and performs no JSON parsing or filesystem I/O. It exists only to ensure that persistence and live semantic processing receive cross-source observations in the same accepted order.
+
+`relative_us` remains the observation-time axis. `ingress_order` is the **canonical processing order**. This distinction matters if a provider captures an observation, delays submission, and submits it after newer GSI state. Replay must reproduce the order the live resolver actually saw rather than moving that delayed observation backward in history.
 
 Older v1/v2 sessions contain GSI only, so replay safely synthesizes their ingress order from the original GSI sequence number.
 
@@ -227,12 +229,18 @@ This prevents offline replay from pretending that a live provider is currently c
 
 ## Deterministic merged replay
 
-`load_replay_stream()` merges GSI and supplementary records by:
+`load_replay_stream()` reconstructs the stream primarily by shared `ingress_order`, because that is the order the live semantic pipeline received. `relative_us` remains the recorded observation time and is used for diagnostics and pacing, but it does not reorder accepted observations.
 
-1. `relative_us`;
-2. shared `ingress_order` as the tie-breaker.
+For example:
 
-The `analyze` command now runs that merged stream through the same layers used by live interpretation:
+```text
+order 201  GSI            relative_us=500000
+order 202  supplementary  relative_us=490000   <- delayed old observation
+```
+
+Replay keeps `201 -> 202`. The resolver then rejects order 202 as stale relative to already-processed GSI, exactly as live processing did.
+
+The `analyze` command runs that reconstructed stream through the same layers used by live interpretation:
 
 ```text
 recorded GSI ----------------> EventDetector ----+
