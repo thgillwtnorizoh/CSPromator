@@ -78,7 +78,8 @@ std::optional<std::uint64_t> parse_optional_u64(const std::string& value) {
 } // namespace
 
 SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
-                                 const MonotonicClock& clock)
+                                 const MonotonicClock& clock,
+                                 SessionApplicationInfo application_info)
     : clock_(clock), start_tick_(clock.now()) {
     std::filesystem::create_directories(sessions_root);
 
@@ -93,8 +94,9 @@ SessionRecorder::SessionRecorder(const std::filesystem::path& sessions_root,
     if (!meta) throw std::runtime_error("Could not create session metadata.json");
     meta << "{\n"
          << "  \"schema_version\": 3,\n"
-         << "  \"application\": \"CSPromator Probe\",\n"
-         << "  \"application_version\": \"0.0.7\",\n"
+         << "  \"application\": \"" << json_escape(application_info.application) << "\",\n"
+         << "  \"application_version\": \"" << json_escape(application_info.application_version) << "\",\n"
+         << "  \"edition\": \"" << json_escape(application_info.edition) << "\",\n"
          << "  \"storage\": \"packed-raw-v1\",\n"
          << "  \"supplementary_storage\": \"tsv-v1\",\n"
          << "  \"clock\": {\"name\": \"" << json_escape(info.name)

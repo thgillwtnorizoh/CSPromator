@@ -19,6 +19,12 @@
 
 namespace cspromator {
 
+struct SessionApplicationInfo {
+    std::string application{"CSPromator"};
+    std::string application_version{"0.0.8"};
+    std::string edition{"unspecified"};
+};
+
 struct SnapshotRecord {
     // v3: ordering shared with supplementary records. Older sessions synthesize
     // this from their GSI sequence because they contain no supplementary stream.
@@ -42,7 +48,9 @@ struct SupplementaryRecord {
 
 class SessionRecorder {
 public:
-    SessionRecorder(const std::filesystem::path& sessions_root, const MonotonicClock& clock);
+    SessionRecorder(const std::filesystem::path& sessions_root,
+                    const MonotonicClock& clock,
+                    SessionApplicationInfo application_info = {});
     ~SessionRecorder();
 
     SessionRecorder(const SessionRecorder&) = delete;

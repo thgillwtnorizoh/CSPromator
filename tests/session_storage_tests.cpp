@@ -30,7 +30,11 @@ void test_v3_combined_roundtrip() {
     cspromator::MonotonicClock clock;
     std::filesystem::path session;
     {
-        cspromator::SessionRecorder recorder(root, clock);
+        cspromator::SessionApplicationInfo application_info;
+        application_info.application = "CSPromator Test";
+        application_info.application_version = "0.0.8-test";
+        application_info.edition = "extended";
+        cspromator::SessionRecorder recorder(root, clock, application_info);
         session = recorder.directory();
 
         const auto a = clock.now();
@@ -104,6 +108,10 @@ void test_v3_combined_roundtrip() {
     const auto metadata = cspromator::load_text_file(session / "metadata.json");
     require(metadata.find("\"schema_version\": 3") != std::string::npos,
             "new sessions should advertise schema version 3");
+    require(metadata.find("\"application_version\": \"0.0.8-test\"") != std::string::npos,
+            "session metadata should preserve application version");
+    require(metadata.find("\"edition\": \"extended\"") != std::string::npos,
+            "session metadata should preserve producing edition");
     require(std::filesystem::exists(session / "raw.gsi"), "v3 session should contain raw.gsi");
     require(std::filesystem::exists(session / "supplementary.timeline.tsv"),
             "v3 session should contain supplementary timeline even when provider is optional");
