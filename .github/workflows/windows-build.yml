@@ -28,26 +28,49 @@ jobs:
       - name: Run regression tests
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Smoke-test QPC clock
-        run: .\build\Release\cspromator-probe.exe clock
+      - name: Smoke-test GSI edition
+        shell: pwsh
+        run: |
+          .\build\Release\cspromator-gsi.exe status
+          .\build\Release\cspromator-gsi.exe clock
+
+      - name: Smoke-test Extended edition
+        shell: pwsh
+        run: |
+          .\build\Release\cspromator-extended.exe status
+          .\build\Release\cspromator-extended.exe clock
 
       - name: Install staged files
         run: cmake --install build --config Release
 
-      - name: Assemble portable package
+      - name: Assemble portable packages
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item stage\bin\cspromator-probe.exe package\
-          Copy-Item config\gamestate_integration_cspromator.cfg package\
-          Copy-Item scripts\install-gsi.ps1 package\
-          Copy-Item README.md package\
-          Copy-Item docs package\docs -Recurse
+          New-Item -ItemType Directory -Force -Path package-gsi | Out-Null
+          New-Item -ItemType Directory -Force -Path package-extended | Out-Null
 
-      - name: Upload Windows package
+          Copy-Item stage\bin\cspromator-gsi.exe package-gsi\
+          Copy-Item stage\bin\cspromator-extended.exe package-extended\
+
+          foreach ($package in @('package-gsi', 'package-extended')) {
+            Copy-Item config\gamestate_integration_cspromator.cfg $package\
+            Copy-Item scripts\install-gsi.ps1 $package\
+            Copy-Item README.md $package\
+            Copy-Item docs "$package\docs" -Recurse
+          }
+
+      - name: Upload GSI Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: CSPromator-0.0.7-windows-x64
-          path: package/
+          name: CSPromator-0.0.8-GSI-windows-x64
+          path: package-gsi/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Extended Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CSPromator-0.0.8-Extended-windows-x64
+          path: package-extended/
           if-no-files-found: error
           retention-days: 14
