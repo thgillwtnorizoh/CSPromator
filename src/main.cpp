@@ -1,4 +1,5 @@
 #include "cspromator/clock.hpp"
+#include "cspromator/edition.hpp"
 #include "cspromator/event_detector.hpp"
 #include "cspromator/game_state.hpp"
 #include "cspromator/http_server.hpp"
@@ -19,9 +20,25 @@
 #include <string>
 #include <thread>
 
+#ifndef CSPROMATOR_EDITION_EXTENDED
+#define CSPROMATOR_EDITION_EXTENDED 0
+#endif
+
 namespace {
 
+constexpr std::string_view kApplicationVersion = "0.0.8";
+constexpr cspromator::EditionKind kEditionKind =
+#if CSPROMATOR_EDITION_EXTENDED
+    cspromator::EditionKind::Extended;
+#else
+    cspromator::EditionKind::Gsi;
+#endif
+
 cspromator::GsiHttpServer* g_active_server = nullptr;
+
+const cspromator::EditionDescriptor& current_edition() {
+    return cspromator::edition_descriptor(kEditionKind);
+}
 
 void handle_signal(int) {
     if (g_active_server) {
@@ -30,21 +47,64 @@ void handle_signal(int) {
 }
 
 void print_usage() {
+    const auto& edition = current_edition();
     std::cout
-        << "CSPromator Probe 0.0.7\n\n"
+        << edition.display_name << " " << kApplicationVersion << "\n\n"
         << "Usage:\n"
-        << "  cspromator-probe record [port] [sessions-dir]\n"
-        << "  cspromator-probe replay <session-dir> [speed] [dump]\n"
-        << "  cspromator-probe analyze <session-dir>\n"
-        << "  cspromator-probe clock\n\n"
+        << "  " << edition.executable_name << " status\n"
+        << "  " << edition.executable_name << " record [port] [sessions-dir]\n"
+        << "  " << edition.executable_name << " replay <session-dir> [speed] [dump]\n"
+        << "  " << edition.executable_name << " analyze <session-dir>\n"
+        << "  " << edition.executable_name << " clock\n\n"
         << "Examples:\n"
-        << "  cspromator-probe record 3010 sessions\n"
-        << "  cspromator-probe replay sessions/session_20260822_110000 10\n"
-        << "  cspromator-probe analyze sessions/session_20260822_110000\n";
+        << "  " << edition.executable_name << " status\n"
+        << "  " << edition.executable_name << " record 3010 sessions\n"
+        << "  " << edition.executable_name << " replay sessions/session_20260822_110000 10\n"
+        << "  " << edition.executable_name << " analyze sessions/session_20260822_110000\n";
 }
 
 std::string optional_count(const std::optional<int>& value) {
     return value ? std::to_string(*value) : "?";
+}
+
+void print_capabilities(std::string_view label, cspromator::Capability capabilities) {
+    std::cout << label << ":\n";
+    bool any = false;
+    for (const auto& descriptor : cspromator::capability_catalog()) {
+        if (!cspromator::has_capability(capabilities, descriptor.capability)) continue;
+        std::cout << "  - " << descriptor.id << ": " << descriptor.description << "\n";
+        any = true;
+    }
+    if (!any) {
+        std::cout << "  - none\n";
+    }
+}
+
+int command_status() {
+    const auto& edition = current_edition();
+    std::cout << edition.display_name << " " << kApplicationVersion << "\n"
+              << "Edition: " << edition.id << "\n"
+              << "Executable: " << edition.executable_name << "\n\n"
+              << "Providers:\n";
+
+    for (const auto& provider : edition.providers) {
+        std::cout << "  [" << cspromator::to_string(provider.status) << "] "
+                  << provider.id << " - " << provider.display_name;
+        if (provider.required) std::cout << " (required)";
+        std::cout << "\n      " << provider.note << "\n";
+    }
+
+    std::cout << "\n";
+    print_capabilities("Active capabilities", cspromator::active_capabilities(edition));
+
+    if (edition.kind == cspromator::EditionKind::Extended) {
+        std::cout << "\n";
+        print_capabilities("Extended capability targets",
+                           cspromator::potential_capabilities(edition));
+        std::cout << "\nPlanned/research providers do not contribute live evidence until their "
+                     "external bridge is implemented and validated.\n";
+    }
+    return 0;
 }
 
 int command_clock() {
@@ -70,8 +130,20 @@ int command_record(int argc, char** argv) {
         sessions = argv[3];
     }
 
+    const auto& edition = current_edition();
+    std::cout << "[PROMATOR] " << edition.display_name << " " << kApplicationVersion
+              << " starting with required provider=gsi\n";
+    if (edition.kind == cspromator::EditionKind::Extended) {
+        std::cout << "[PROMATOR] Extended experimental providers are currently unplugged; "
+                     "live behavior falls back to GSI.\n";
+    }
+
     cspromator::MonotonicClock clock;
-    cspromator::SessionRecorder recorder(sessions, clock);
+    cspromator::SessionApplicationInfo application_info;
+    application_info.application = "CSPromator";
+    application_info.application_version = std::string(kApplicationVersion);
+    application_info.edition = std::string(edition.id);
+    cspromator::SessionRecorder recorder(sessions, clock, std::move(application_info));
     cspromator::LiveEventPipeline live_events(
         [](const cspromator::NormalizedGameState& state,
            const std::vector<cspromator::PromatorEvent>& events) {
@@ -256,6 +328,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         const std::string command = argv[1];
+        if (command == "status") return command_status();
         if (command == "record") return command_record(argc, argv);
         if (command == "replay") return command_replay(argc, argv);
         if (command == "analyze") return command_analyze(argc, argv);
